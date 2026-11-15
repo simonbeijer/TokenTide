@@ -3,12 +3,16 @@ import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { channels } from '../shared/api'
 import { createEntryList } from './entryList'
+import { createEntryStore } from './entryStore'
 import { runWakeAttempt } from './wakeAttempt'
 
 // A later ticket adds a fallback through the login shell and a setting for the path.
 const claudePath = join(homedir(), '.local', 'bin', 'claude')
 
-const entries = createEntryList({ runWakeAttempt: () => runWakeAttempt({ claudePath }) })
+const entries = createEntryList({
+  runWakeAttempt: () => runWakeAttempt({ claudePath }),
+  store: createEntryStore(join(app.getPath('userData'), 'entries.json'))
+})
 
 function createAppWindow(): BrowserWindow {
   const appWindow = new BrowserWindow({
