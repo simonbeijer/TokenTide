@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import type { Entry, EntryStatus } from '../shared/entry'
+import type { Entry, EntryStatus, StartChoice, StartTime } from '../shared/entry'
 import type { AttemptOutcome } from './attemptOutcome'
 import type { EntryStore } from './entryStore'
+import { nextOccurrence } from './startTime'
 
 export interface EntryListDeps {
   runWakeAttempt: () => Promise<AttemptOutcome>
   store: EntryStore
+  now?: () => Date
 }
 
 type Listener = (entries: Entry[]) => void
 
-export function createEntryList({ runWakeAttempt, store }: EntryListDeps) {
+export function createEntryList({ runWakeAttempt, store, now = () => new Date() }: EntryListDeps) {
   // Nothing can be running at start, so an Entry still marked Running was cut off by a crash.
   let entries: Entry[] = store
     .load()
@@ -42,11 +44,20 @@ export function createEntryList({ runWakeAttempt, store }: EntryListDeps) {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    addWake(): Entry {
-      const entry: Entry = { id: randomUUID(), kind: 'Wake', startTime: 'Now', status: 'Waiting' }
+    /** Starts every Waiting Entry whose Start time has come. Called often, never as one long timer. */
+    checkClock() {
+      const current = now().getTime()
+      for (const entry of entries) {
+        if (entry.status !== 'Waiting' || entry.startTime === 'Now') continue
+        if (new Date(entry.startTime.at).getTime() <= current) start(entry.id)
+      }
+    },
+    addWake(choice: StartChoice): Entry {
+      const startTime: StartTime = choice === 'Now' ? 'Now' : { at: nextOccurrence(choice.clock, now()).toISOString() }
+      const entry: Entry = { id: randomUUID(), kind: 'Wake', startTime, status: 'Waiting' }
       entries = [...entries, entry]
       saveAndNotify()
-      start(entry.id)
+      if (startTime === 'Now') start(entry.id)
       return { ...entry }
     }
   }

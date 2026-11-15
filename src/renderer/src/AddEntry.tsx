@@ -1,13 +1,22 @@
 import { useState } from 'react'
+import type { StartChoice } from '../../shared/entry'
 
 interface Props {
-  onAddWake: () => void
+  onAddWake: (start: StartChoice) => void
 }
 
-/** The "+ Add" flow. Only Wake with Start time Now exists so far. */
+/** The "+ Add" flow. Only Wake exists so far. */
 export function AddEntry({ onAddWake }: Props) {
   const [open, setOpen] = useState(false)
   const [wake, setWake] = useState(true)
+  const [startAt, setStartAt] = useState<'now' | 'clock'>('now')
+  const [clock, setClock] = useState('')
+
+  const close = () => {
+    setOpen(false)
+    setStartAt('now')
+    setClock('')
+  }
 
   if (!open) {
     return (
@@ -17,14 +26,16 @@ export function AddEntry({ onAddWake }: Props) {
     )
   }
 
+  const ready = wake && (startAt === 'now' || clock !== '')
+
   return (
     <form
       className="add-form"
       onSubmit={(event) => {
         event.preventDefault()
-        if (!wake) return
-        onAddWake()
-        setOpen(false)
+        if (!ready) return
+        onAddWake(startAt === 'now' ? 'Now' : { clock })
+        close()
       }}
     >
       <label>
@@ -33,14 +44,34 @@ export function AddEntry({ onAddWake }: Props) {
       <fieldset>
         <legend>Start time</legend>
         <label>
-          <input type="radio" name="start-time" value="now" checked readOnly /> Now
+          <input type="radio" name="start-time" value="now" checked={startAt === 'now'} onChange={() => setStartAt('now')} />{' '}
+          Now
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="start-time"
+            value="clock"
+            checked={startAt === 'clock'}
+            onChange={() => setStartAt('clock')}
+          />{' '}
+          At{' '}
+          <input
+            type="time"
+            aria-label="Clock time"
+            value={clock}
+            onChange={(event) => {
+              setClock(event.target.value)
+              setStartAt('clock')
+            }}
+          />
         </label>
       </fieldset>
       <div className="add-actions">
-        <button type="button" onClick={() => setOpen(false)}>
+        <button type="button" onClick={close}>
           Cancel
         </button>
-        <button type="submit" disabled={!wake}>
+        <button type="submit" disabled={!ready}>
           Add
         </button>
       </div>

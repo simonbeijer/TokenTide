@@ -1,7 +1,8 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron'
 import { channels } from '../shared/api'
+import type { StartChoice } from '../shared/entry'
 import { createEntryList } from './entryList'
 import { createEntryStore } from './entryStore'
 import { runWakeAttempt } from './wakeAttempt'
@@ -35,7 +36,7 @@ function createAppWindow(): BrowserWindow {
 }
 
 ipcMain.handle(channels.listEntries, () => entries.list())
-ipcMain.handle(channels.addWake, () => entries.addWake())
+ipcMain.handle(channels.addWake, (_event, start: StartChoice) => entries.addWake(start))
 
 entries.onChange((list) => {
   for (const appWindow of BrowserWindow.getAllWindows()) {
@@ -43,7 +44,13 @@ entries.onChange((list) => {
   }
 })
 
+// Compare the list with the clock often, instead of one long timer that would stop while the computer sleeps.
+const clockCheckInterval = 30_000
+
 void app.whenReady().then(() => {
+  entries.checkClock()
+  setInterval(() => entries.checkClock(), clockCheckInterval)
+  powerMonitor.on('resume', () => entries.checkClock())
   createAppWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createAppWindow()

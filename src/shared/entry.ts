@@ -2,9 +2,15 @@ export type EntryStatus = 'Waiting' | 'Running' | 'Done' | 'Failed'
 
 export type EntryKind = 'Wake'
 
+/** What the user picks in "+ Add": Now, or a clock time as "HH:MM". */
+export type StartChoice = 'Now' | { clock: string }
+
+/** Now, or the moment the chosen clock time comes next, as an ISO timestamp. */
+export type StartTime = 'Now' | { at: string }
+
 export interface Entry {
   id: string
   kind: EntryKind
-  startTime: 'Now'
+  startTime: StartTime
   status: EntryStatus
 }

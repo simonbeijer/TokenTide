@@ -4,7 +4,7 @@ import type { Entry } from '../shared/entry'
 
 const api: TokenTideApi = {
   listEntries: () => ipcRenderer.invoke(channels.listEntries),
-  addWake: () => ipcRenderer.invoke(channels.addWake),
+  addWake: (start) => ipcRenderer.invoke(channels.addWake, start),
   onEntriesChanged(listener) {
     const handler = (_event: IpcRendererEvent, entries: Entry[]) => listener(entries)
     ipcRenderer.on(channels.entriesChanged, handler)
