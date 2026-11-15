@@ -1,0 +1,66 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+}
+
+.status-panel {
+  min-height: 64px;
+  border: 1px dashed GrayText;
+  border-radius: 8px;
+}
+
+.add-button {
+  align-self: flex-start;
+}
+
+.add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-form fieldset {
+  margin: 0;
+}
+
+.add-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entry {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, GrayText 30%, transparent);
+}
+
+.entry-status {
+  margin-left: auto;
+}
+
+.status-done {
+  color: green;
+}
+
+.status-failed {
+  color: crimson;
+}
