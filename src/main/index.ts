@@ -5,14 +5,25 @@ import { channels } from '../shared/api'
 import type { StartChoice, WakeOptions } from '../shared/entry'
 import { createEntryList } from './entryList'
 import { createEntryStore } from './entryStore'
+import { createLogStore } from './logStore'
 import { runWakeAttempt } from './wakeAttempt'
 
 // A later ticket adds a fallback through the login shell and a setting for the path.
 const claudePath = join(homedir(), '.local', 'bin', 'claude')
 
+const sendToAppWindows = (channel: string, value: unknown) => {
+  for (const appWindow of BrowserWindow.getAllWindows()) appWindow.webContents.send(channel, value)
+}
+
+const logStore = createLogStore(join(app.getPath('userData'), 'log.jsonl'))
+
 const entries = createEntryList({
   runWakeAttempt: (signal) => runWakeAttempt({ claudePath, signal }),
-  store: createEntryStore(join(app.getPath('userData'), 'entries.json'))
+  store: createEntryStore(join(app.getPath('userData'), 'entries.json')),
+  log: (line) => {
+    logStore.append(line)
+    sendToAppWindows(channels.logLine, line)
+  }
 })
 
 function createAppWindow(): BrowserWindow {
@@ -38,12 +49,9 @@ function createAppWindow(): BrowserWindow {
 ipcMain.handle(channels.listEntries, () => entries.list())
 ipcMain.handle(channels.addWake, (_event, start: StartChoice, options: WakeOptions) => entries.addWake(start, options))
 ipcMain.handle(channels.stopEntry, (_event, id: string) => entries.stop(id))
+ipcMain.handle(channels.listLog, () => logStore.read())
 
-entries.onChange((list) => {
-  for (const appWindow of BrowserWindow.getAllWindows()) {
-    appWindow.webContents.send(channels.entriesChanged, list)
-  }
-})
+entries.onChange((list) => sendToAppWindows(channels.entriesChanged, list))
 
 // Compare the list with the clock often, instead of one long timer that would stop while the computer sleeps.
 const clockCheckInterval = 30_000

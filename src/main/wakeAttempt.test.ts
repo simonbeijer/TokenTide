@@ -25,18 +25,23 @@ describe('runWakeAttempt', () => {
   })
 
   it('is Done when Claude ends with a result event and exit code 0', async () => {
-    const outcome = await runWakeAttempt({ claudePath: fakeClaude, env: withEnv({ FAKE_CLAUDE_SCENARIO: 'success' }) })
+    const { outcome } = await runWakeAttempt({ claudePath: fakeClaude, env: withEnv({ FAKE_CLAUDE_SCENARIO: 'success' }) })
     expect(outcome).toBe('Done')
   })
 
   it.each(['error-exit', 'no-result', 'text-only'])('is Failed when Claude ends in the %s way', async (scenario) => {
-    const outcome = await runWakeAttempt({ claudePath: fakeClaude, env: withEnv({ FAKE_CLAUDE_SCENARIO: scenario }) })
+    const { outcome } = await runWakeAttempt({ claudePath: fakeClaude, env: withEnv({ FAKE_CLAUDE_SCENARIO: scenario }) })
     expect(outcome).toBe('Failed')
   })
 
-  it('is Failed when Claude cannot be started at all', async () => {
-    const outcome = await runWakeAttempt({ claudePath: '/nonexistent/claude' })
-    expect(outcome).toBe('Failed')
+  it('is Failed when Claude cannot be started at all, and has nothing else to report', async () => {
+    const report = await runWakeAttempt({ claudePath: '/nonexistent/claude' })
+    expect(report).toEqual({ outcome: 'Failed' })
+  })
+
+  it("reports Claude's session id and the last line of its answer", async () => {
+    const report = await runWakeAttempt({ claudePath: fakeClaude, env: withEnv({ FAKE_CLAUDE_SCENARIO: 'success' }) })
+    expect(report).toEqual({ outcome: 'Done', sessionId: 'fake-session', lastLine: 'Hi!' })
   })
 
   describe('when the signal is aborted', () => {
@@ -51,7 +56,7 @@ describe('runWakeAttempt', () => {
       const signals = recordFile()
       const controller = new AbortController()
 
-      const outcome = await runWakeAttempt({
+      const { outcome } = await runWakeAttempt({
         claudePath: fakeClaude,
         env: withEnv({ FAKE_CLAUDE_SCENARIO: 'hang', FAKE_CLAUDE_SIGNALS: signals }),
         signal: controller.signal,
@@ -67,7 +72,7 @@ describe('runWakeAttempt', () => {
       const signals = recordFile()
       const controller = new AbortController()
 
-      const outcome = await runWakeAttempt({
+      const { outcome } = await runWakeAttempt({
         claudePath: fakeClaude,
         env: withEnv({ FAKE_CLAUDE_SCENARIO: 'hang', FAKE_CLAUDE_SIGNALS: signals, FAKE_CLAUDE_IGNORE_SIGINT: '1' }),
         signal: controller.signal,
@@ -83,7 +88,7 @@ describe('runWakeAttempt', () => {
       const signals = recordFile()
       const controller = new AbortController()
 
-      const outcome = await runWakeAttempt({
+      const { outcome } = await runWakeAttempt({
         claudePath: fakeClaude,
         env: withEnv({
           FAKE_CLAUDE_SCENARIO: 'hang',
@@ -104,7 +109,7 @@ describe('runWakeAttempt', () => {
     it('is Done when Claude answers while it is being ended, because the Window is then running', async () => {
       const controller = new AbortController()
 
-      const outcome = await runWakeAttempt({
+      const { outcome } = await runWakeAttempt({
         claudePath: fakeClaude,
         env: withEnv({ FAKE_CLAUDE_SCENARIO: 'hang', FAKE_CLAUDE_ANSWER_ON_SIGINT: '1' }),
         signal: controller.signal,
@@ -117,7 +122,7 @@ describe('runWakeAttempt', () => {
     it('does not start Claude when the signal is already aborted', async () => {
       const record = recordFile()
 
-      const outcome = await runWakeAttempt({
+      const { outcome } = await runWakeAttempt({
         claudePath: fakeClaude,
         env: withEnv({ FAKE_CLAUDE_RECORD: record }),
         signal: AbortSignal.abort()

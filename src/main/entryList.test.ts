@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Entry } from '../shared/entry'
-import type { AttemptOutcome } from './attemptOutcome'
+import type { LogLine } from '../shared/log'
+import type { AttemptOutcome, AttemptReport } from './attemptOutcome'
 import { createEntryList } from './entryList'
 import type { EntryStore } from './entryStore'
 
@@ -18,19 +19,19 @@ function memoryStore(saved: Entry[] = []): EntryStore & { saved: Entry[] } {
 
 /** A stand-in for Claude: each Attempt waits until the test finishes it, and ends as Failed when it is aborted. */
 function controlledAttempt() {
-  let finish: (outcome: AttemptOutcome) => void = () => {}
+  let finish: (report: AttemptReport) => void = () => {}
   let signal: AbortSignal | undefined
   let calls = 0
   return {
     run: (attemptSignal: AbortSignal) => {
       calls++
       signal = attemptSignal
-      return new Promise<AttemptOutcome>((resolve) => {
+      return new Promise<AttemptReport>((resolve) => {
         finish = resolve
-        attemptSignal.addEventListener('abort', () => resolve('Failed'))
+        attemptSignal.addEventListener('abort', () => resolve({ outcome: 'Failed' }))
       })
     },
-    finish: (outcome: AttemptOutcome) => finish(outcome),
+    finish: (outcome: AttemptOutcome, output: Omit<AttemptReport, 'outcome'> = {}) => finish({ outcome, ...output }),
     get calls() {
       return calls
     },
@@ -365,7 +366,7 @@ describe('entry list', () => {
     it('a Wake is Done when Claude answers while its timed-out Attempt is being ended', async () => {
       const entries = createEntryList({
         runWakeAttempt: (signal) =>
-          new Promise<AttemptOutcome>((resolve) => signal.addEventListener('abort', () => resolve('Done'))),
+          new Promise<AttemptReport>((resolve) => signal.addEventListener('abort', () => resolve({ outcome: 'Done' }))),
         store: memoryStore()
       })
       entries.addWake('Now', { retry: true })
@@ -412,6 +413,142 @@ describe('entry list', () => {
       entries.stop(entry.id)
 
       expect(statusOf(entries)).toBe('Done')
+    })
+  })
+
+  describe('log', () => {
+    function recordingLog() {
+      const lines: LogLine[] = []
+      return { lines, log: (line: LogLine) => lines.push(line) }
+    }
+
+    it('an Attempt that ends adds one line with time, status, session id and last line, and no Project for a Wake', async () => {
+      const attempt = controlledAttempt()
+      const { lines, log } = recordingLog()
+      const clock = fakeClock('2026-11-16T05:00:00Z')
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), now: clock.now, log })
+      entries.addWake('Now')
+
+      clock.set('2026-11-16T05:00:03Z')
+      attempt.finish('Done', { sessionId: 'abc', lastLine: 'Hi!' })
+      await flush()
+
+      expect(lines).toEqual([{ time: '2026-11-16T05:00:03.000Z', status: 'Done', sessionId: 'abc', lastLine: 'Hi!' }])
+    })
+
+    it('an Attempt that gave no output still adds a line, with the time and status', async () => {
+      const { lines, log } = recordingLog()
+      const clock = fakeClock('2026-11-16T05:00:00Z')
+      const entries = createEntryList({
+        runWakeAttempt: () => Promise.reject(new Error('claude not found')),
+        store: memoryStore(),
+        now: clock.now,
+        log
+      })
+
+      entries.addWake('Now')
+      await flush()
+
+      expect(lines).toEqual([{ time: '2026-11-16T05:00:00.000Z', status: 'Failed' }])
+    })
+
+    it('with Retry, each Attempt that ends adds its own line', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const attempt = controlledAttempt()
+        const { lines, log } = recordingLog()
+        const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), log })
+        entries.addWake('Now', { retry: true })
+
+        attempt.finish('Failed', { sessionId: 'first' })
+        await vi.advanceTimersByTimeAsync(60_000)
+        attempt.finish('Done', { sessionId: 'second', lastLine: 'Hi!' })
+        await vi.advanceTimersByTimeAsync(0)
+
+        expect(lines).toEqual([
+          expect.objectContaining({ status: 'Failed', sessionId: 'first' }),
+          expect.objectContaining({ status: 'Done', sessionId: 'second', lastLine: 'Hi!' })
+        ])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('Stop during an Attempt adds one line with Stopped, once the Attempt has ended', async () => {
+      const { lines, log } = recordingLog()
+      const entries = createEntryList({
+        runWakeAttempt: (signal) =>
+          new Promise<AttemptReport>((resolve) =>
+            signal.addEventListener('abort', () => resolve({ outcome: 'Failed', sessionId: 'abc' }))
+          ),
+        store: memoryStore(),
+        log
+      })
+      const entry = entries.addWake('Now', { retry: true })
+
+      entries.stop(entry.id)
+      await flush()
+
+      expect(lines).toEqual([expect.objectContaining({ status: 'Stopped', sessionId: 'abc' })])
+    })
+
+    it('Stop during an Attempt gives Done on the Entry and on the line when Claude answers while the Attempt is ending', async () => {
+      const { lines, log } = recordingLog()
+      const entries = createEntryList({
+        runWakeAttempt: (signal) =>
+          new Promise<AttemptReport>((resolve) =>
+            signal.addEventListener('abort', () => resolve({ outcome: 'Done', sessionId: 'abc', lastLine: 'Hi!' }))
+          ),
+        store: memoryStore(),
+        log
+      })
+      const entry = entries.addWake('Now', { retry: true })
+
+      entries.stop(entry.id)
+      await flush()
+
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Done' })])
+      expect(lines).toEqual([expect.objectContaining({ status: 'Done', sessionId: 'abc', lastLine: 'Hi!' })])
+    })
+
+    it('Stop between two Attempts adds one line with Stopped right away', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        const attempt = controlledAttempt()
+        const { lines, log } = recordingLog()
+        const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), log })
+        const entry = entries.addWake('Now', { retry: true })
+        attempt.finish('Failed')
+        await vi.advanceTimersByTimeAsync(30_000)
+
+        entries.stop(entry.id)
+        await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+        expect(lines.map((line) => line.status)).toEqual(['Failed', 'Stopped'])
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('a missed Start time adds a line with Failed and the Note, though no Attempt was made', () => {
+      const { lines, log } = recordingLog()
+      const clock = fakeClock('2026-11-15T22:00:00Z')
+      const entries = createEntryList({ runWakeAttempt: controlledAttempt().run, store: memoryStore(), now: clock.now, log })
+      entries.addWake({ clock: '05:00' })
+
+      clock.set('2026-11-16T09:00:00Z')
+      entries.checkClock()
+
+      expect(lines).toEqual([{ time: '2026-11-16T09:00:00.000Z', status: 'Failed', note: 'missed start time' }])
+    })
+
+    it('an Entry cut off by a crash adds a line with Failed when the app starts again', () => {
+      const { lines, log } = recordingLog()
+      const store = memoryStore([{ id: 'cut-off', kind: 'Wake', startTime: 'Now', retry: false, status: 'Running' }])
+
+      createEntryList({ runWakeAttempt: controlledAttempt().run, store, now: () => new Date('2026-11-16T07:00:00Z'), log })
+
+      expect(lines).toEqual([{ time: '2026-11-16T07:00:00.000Z', status: 'Failed', note: 'cut off by a restart' }])
     })
   })
 })

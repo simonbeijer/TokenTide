@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
-import { type AttemptOutcome, readAttemptOutcome } from './attemptOutcome'
+import { type AttemptReport, readAttemptReport } from './attemptOutcome'
 import { wakeCommand } from './wakeCommand'
 
 export interface WakeAttemptOptions {
@@ -33,8 +33,8 @@ export async function runWakeAttempt({
   terminateAfter = 5_000,
   killAfter = 5_000,
   onLine
-}: WakeAttemptOptions): Promise<AttemptOutcome> {
-  if (signal?.aborted) return 'Failed'
+}: WakeAttemptOptions): Promise<AttemptReport> {
+  if (signal?.aborted) return { outcome: 'Failed' }
   const folder = await mkdtemp(join(tmpdir(), 'tokentide-wake-'))
   try {
     return await runClaude(claudePath, wakeCommand(), { cwd: folder, env, signal, terminateAfter, killAfter, onLine })
@@ -47,7 +47,7 @@ function runClaude(
   claudePath: string,
   args: string[],
   { cwd, env, signal, terminateAfter, killAfter, onLine }: ClaudeOptions
-): Promise<AttemptOutcome> {
+): Promise<AttemptReport> {
   return new Promise((resolve) => {
     const child = spawn(claudePath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     const lines: string[] = []
@@ -70,15 +70,15 @@ function runClaude(
     signal?.addEventListener('abort', interruptThenTerminate, { once: true })
 
     let settled = false
-    const settle = (outcome: AttemptOutcome) => {
+    const settle = (report: AttemptReport) => {
       if (settled) return
       settled = true
       clearTimeout(escalation)
       signal?.removeEventListener('abort', interruptThenTerminate)
       // An answer wins even while the Attempt is being ended: the Window is running then.
-      resolve(outcome)
+      resolve(report)
     }
-    child.on('error', () => settle('Failed'))
-    child.on('close', (exitCode) => settle(readAttemptOutcome(lines, exitCode)))
+    child.on('error', () => settle({ outcome: 'Failed' }))
+    child.on('close', (exitCode) => settle(readAttemptReport(lines, exitCode)))
   })
 }

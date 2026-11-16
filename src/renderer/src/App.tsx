@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Entry } from '../../shared/entry'
 import { startTimeLabel } from '../../shared/startTimeLabel'
 import { AddEntry } from './AddEntry'
+import { Log } from './Log'
 
 export function App() {
   const [entries, setEntries] = useState<Entry[]>([])
@@ -38,6 +39,7 @@ export function App() {
           </li>
         ))}
       </ul>
+      <Log />
     </main>
   )
 }
