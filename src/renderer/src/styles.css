@@ -108,3 +108,51 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.claude-missing {
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #c0392b 15%, transparent);
+}
+
+.claude-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.claude-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: GrayText;
+}
+
+.claude-path {
+  margin: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.claude-source {
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  color: GrayText;
+}
+
+.claude-change {
+  align-self: flex-start;
+}
+
+.claude-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.claude-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}

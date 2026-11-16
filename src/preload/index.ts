@@ -17,7 +17,9 @@ const api: TokenTideApi = {
     const handler = (_event: IpcRendererEvent, line: LogLine) => listener(line)
     ipcRenderer.on(channels.logLine, handler)
     return () => ipcRenderer.removeListener(channels.logLine, handler)
-  }
+  },
+  getClaude: () => ipcRenderer.invoke(channels.getClaude),
+  setClaudePath: (path) => ipcRenderer.invoke(channels.setClaudePath, path)
 }
 
 contextBridge.exposeInMainWorld('tokentide', api)
