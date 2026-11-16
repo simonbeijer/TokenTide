@@ -28,6 +28,15 @@ describe('settings store', () => {
     expect(createSettingsStore(file).load()).toEqual({ claudePath: '/opt/bin/claude' })
   })
 
+  it('keeps the Window end and the Weekly reset across a restart', () => {
+    const file = join(folder, 'settings.json')
+    const statusValues = { windowEnd: '2026-11-16T14:00:00.000Z', weeklyReset: { weekday: 4, clock: '09:00' } }
+
+    createSettingsStore(file).save(statusValues)
+
+    expect(createSettingsStore(file).load()).toEqual(statusValues)
+  })
+
   it('starts with no settings when the file cannot be read, and moves it aside', () => {
     const file = join(folder, 'settings.json')
     writeFileSync(file, '{ not json')

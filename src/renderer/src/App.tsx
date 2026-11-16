@@ -5,6 +5,7 @@ import { startTimeLabel } from '../../shared/startTimeLabel'
 import { AddEntry } from './AddEntry'
 import { ClaudeSetting } from './ClaudeSetting'
 import { Log } from './Log'
+import { StatusPanel } from './StatusPanel'
 
 export function App() {
   const [entries, setEntries] = useState<Entry[]>([])
@@ -19,10 +20,10 @@ export function App() {
     void window.tokentide.getClaude().then(setClaude)
   }, [])
 
-  // Redraw every minute, so a label such as "05:00 tomorrow" turns into "05:00" after midnight.
+  // Redraw often, so the Status panel counts down and a label such as "05:00 tomorrow" turns into "05:00" after midnight.
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 60_000)
+    const timer = setInterval(() => setNow(new Date()), 15_000)
     return () => clearInterval(timer)
   }, [])
 
@@ -34,7 +35,7 @@ export function App() {
           <a href="#claude-setting">Set the path to Claude</a> in the Claude setting.
         </p>
       )}
-      <section className="status-panel" aria-label="Status panel" />
+      <StatusPanel now={now} />
       <AddEntry onAddWake={(start, options) => void window.tokentide.addWake(start, options)} />
       <ul className="entry-list" aria-label="Entries">
         {entries.map((entry) => (

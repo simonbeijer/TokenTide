@@ -1,6 +1,7 @@
+import type { StatusValues } from '../shared/api'
 import { createJsonFile, type JsonFile } from './jsonFile'
 
-export interface Settings {
+export interface Settings extends StatusValues {
   /** The path to Claude the user set in the app. Without it, the app finds Claude by itself at every start. */
   claudePath?: string
 }

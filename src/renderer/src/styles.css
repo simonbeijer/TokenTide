@@ -16,9 +16,43 @@ body {
 }
 
 .status-panel {
-  min-height: 64px;
-  border: 1px dashed GrayText;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, GrayText 40%, transparent);
   border-radius: 8px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-label {
+  width: 110px;
+  color: GrayText;
+}
+
+.window-bar {
+  flex: 1;
+}
+
+.status-value {
+  margin-left: auto;
+}
+
+.status-none {
+  color: GrayText;
+}
+
+.status-form {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
 }
 
 .add-button {

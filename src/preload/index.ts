@@ -19,7 +19,10 @@ const api: TokenTideApi = {
     return () => ipcRenderer.removeListener(channels.logLine, handler)
   },
   getClaude: () => ipcRenderer.invoke(channels.getClaude),
-  setClaudePath: (path) => ipcRenderer.invoke(channels.setClaudePath, path)
+  setClaudePath: (path) => ipcRenderer.invoke(channels.setClaudePath, path),
+  getStatusValues: () => ipcRenderer.invoke(channels.getStatusValues),
+  setWindowEnd: (clock) => ipcRenderer.invoke(channels.setWindowEnd, clock),
+  setWeeklyReset: (reset) => ipcRenderer.invoke(channels.setWeeklyReset, reset)
 }
 
 contextBridge.exposeInMainWorld('tokentide', api)

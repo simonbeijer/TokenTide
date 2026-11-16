@@ -1,8 +1,7 @@
+import { formatClock } from './clock'
 import type { StartTime } from './entry'
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-const twoDigits = (value: number) => String(value).padStart(2, '0')
 
 const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString()
 
@@ -10,7 +9,7 @@ const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString()
 export function startTimeLabel(startTime: StartTime, now: Date): string {
   if (startTime === 'Now') return 'Now'
   const at = new Date(startTime.at)
-  const clock = `${twoDigits(at.getHours())}:${twoDigits(at.getMinutes())}`
+  const clock = formatClock(at)
   const tomorrow = new Date(now)
   tomorrow.setDate(now.getDate() + 1)
   if (sameDay(at, now)) return clock

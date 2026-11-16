@@ -1,15 +1,17 @@
 import { homedir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron'
-import { channels } from '../shared/api'
+import { channels, type StatusValues } from '../shared/api'
 import type { ClaudeLocation } from '../shared/claude'
 import type { StartChoice, WakeOptions } from '../shared/entry'
+import { nextWeeklyReset, type WeeklyReset } from '../shared/weeklyReset'
 import { locateClaude } from './claudeLocation'
 import { createEntryList } from './entryList'
 import { createEntryStore } from './entryStore'
 import { createLogStore } from './logStore'
 import { type LoginShellAnswer, readLoginShell } from './loginShell'
 import { createSettingsStore } from './settingsStore'
+import { windowEndFrom } from './windowEnd'
 import { runWakeAttempt } from './wakeAttempt'
 
 // An app started from Finder gets neither the terminal's PATH nor, always, SHELL, so the login shell is asked once at start.
@@ -77,6 +79,21 @@ ipcMain.handle(channels.setClaudePath, async (_event, path: string) => {
   // An empty path hands the choice back to the app, which then finds Claude by itself.
   settings.save({ ...settings.load(), claudePath: path.trim() || undefined })
   return locate()
+})
+
+const statusValues = (): StatusValues => {
+  const { windowEnd, weeklyReset } = settings.load()
+  return { windowEnd, weeklyReset }
+}
+ipcMain.handle(channels.getStatusValues, () => statusValues())
+ipcMain.handle(channels.setWindowEnd, (_event, clock: string) => {
+  settings.save({ ...settings.load(), windowEnd: windowEndFrom(clock, new Date()).toISOString() })
+  return statusValues()
+})
+ipcMain.handle(channels.setWeeklyReset, (_event, reset: WeeklyReset) => {
+  nextWeeklyReset(reset, new Date()) // Throws for a reset that is not a weekday and a clock time.
+  settings.save({ ...settings.load(), weeklyReset: { weekday: reset.weekday, clock: reset.clock } })
+  return statusValues()
 })
 
 entries.onChange((list) => sendToAppWindows(channels.entriesChanged, list))
