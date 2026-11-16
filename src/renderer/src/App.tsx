@@ -29,6 +29,7 @@ export function App() {
             <span className="entry-start">{startTimeLabel(entry.startTime, now)}</span>
             {entry.retry && <span className="entry-retry">Retry</span>}
             <span className={`entry-status status-${entry.status.toLowerCase()}`}>{entry.status}</span>
+            {entry.note && <span className="entry-note">{entry.note}</span>}
             {entry.retry && entry.status === 'Running' && (
               <button type="button" className="entry-stop" onClick={() => void window.tokentide.stopEntry(entry.id)}>
                 Stop

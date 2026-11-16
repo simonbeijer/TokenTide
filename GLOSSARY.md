@@ -79,3 +79,7 @@ _Avoid_: Cancelled, aborted, killed
 **Failed**:
 The Entry ended for any other reason, including never starting.
 _Avoid_: Error, crashed
+
+**Note**:
+A short text on the Entry that says why it got its status, such as "missed start time".
+_Avoid_: Reason, message, comment

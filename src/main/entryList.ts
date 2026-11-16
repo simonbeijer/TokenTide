@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Entry, EntryStatus, StartChoice, StartTime, WakeOptions } from '../shared/entry'
 import type { AttemptOutcome } from './attemptOutcome'
 import type { EntryStore } from './entryStore'
+import { isMissed } from './lateness'
 import { nextOccurrence } from './startTime'
 
 /** An Attempt with no answer after this long is ended and counts as failed. */
@@ -41,8 +42,8 @@ export function createEntryList({ runWakeAttempt, store, now = () => new Date() 
     store.save(entries)
     listeners.forEach((listener) => listener(list()))
   }
-  const setStatus = (id: string, status: EntryStatus) => {
-    entries = entries.map((entry) => (entry.id === id ? { ...entry, status } : entry))
+  const setStatus = (id: string, status: EntryStatus, note?: string) => {
+    entries = entries.map((entry) => (entry.id === id ? { ...entry, status, ...(note && { note }) } : entry))
     saveAndNotify()
   }
   const finish = (id: string, status: EntryStatus) => {
@@ -86,12 +87,19 @@ export function createEntryList({ runWakeAttempt, store, now = () => new Date() 
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
-    /** Starts every Waiting Entry whose Start time has come. Called often, never as one long timer. */
+    /**
+     * Starts every Waiting Entry whose Start time has come. Called often, never as one long timer.
+     * An Entry found too late was missed while the computer slept or the app was closed, and gets Failed,
+     * unless it is a Wake with Retry: that one starts trying right away.
+     */
     checkClock() {
-      const current = now().getTime()
+      const current = now()
       for (const entry of entries) {
         if (entry.status !== 'Waiting' || entry.startTime === 'Now') continue
-        if (new Date(entry.startTime.at).getTime() <= current) start(entry)
+        const startTime = new Date(entry.startTime.at)
+        if (startTime > current) continue
+        if (isMissed(startTime, current) && !entry.retry) setStatus(entry.id, 'Failed', 'missed start time')
+        else start(entry)
       }
     },
     addWake(choice: StartChoice, { retry = false }: WakeOptions = {}): Entry {

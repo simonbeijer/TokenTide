@@ -15,6 +15,8 @@ export interface Entry {
   /** Keep making Attempts, one a minute, until one succeeds or the user presses Stop. */
   retry: boolean
   status: EntryStatus
+  /** A short text shown on the Entry that says why it got its status, such as "missed start time". */
+  note?: string
 }
 
 /** What the user picks for a Wake in "+ Add", besides the Start time. */

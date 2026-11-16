@@ -147,6 +147,82 @@ describe('entry list', () => {
     })
   })
 
+  describe('missed Start time', () => {
+    it('a Waiting Entry found more than 5 minutes late after the computer slept does not start and gets Failed', () => {
+      const attempt = controlledAttempt()
+      const clock = fakeClock('2026-11-15T22:00:00')
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), now: clock.now })
+      const entry = entries.addWake({ clock: '05:00' })
+
+      // Asleep from 22:00 to 07:00: the first check after waking is two hours late.
+      clock.set('2026-11-16T07:00:00')
+      entries.checkClock()
+
+      expect(attempt.calls).toBe(0)
+      expect(entries.list()).toEqual([
+        expect.objectContaining({ id: entry.id, status: 'Failed', note: 'missed start time' })
+      ])
+    })
+
+    it('an Entry found 5 minutes or less after its Start time starts as usual', () => {
+      const attempt = controlledAttempt()
+      const clock = fakeClock('2026-11-15T22:00:00')
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), now: clock.now })
+      const entry = entries.addWake({ clock: '05:00' })
+
+      clock.set('2026-11-16T05:05:00')
+      entries.checkClock()
+
+      expect(attempt.calls).toBe(1)
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Running' })])
+      expect(entries.list()[0].note).toBeUndefined()
+    })
+
+    it('a Waiting Entry missed while the app was closed gets Failed at the first check after opening', () => {
+      const store = memoryStore()
+      const clock = fakeClock('2026-11-15T22:00:00')
+      createEntryList({ runWakeAttempt: controlledAttempt().run, store, now: clock.now }).addWake({ clock: '05:00' })
+
+      // Closed from 22:00 to 09:00.
+      clock.set('2026-11-16T09:00:00')
+      const attempt = controlledAttempt()
+      const after = createEntryList({ runWakeAttempt: attempt.run, store, now: clock.now })
+      after.checkClock()
+
+      expect(attempt.calls).toBe(0)
+      expect(after.list()).toEqual([expect.objectContaining({ status: 'Failed', note: 'missed start time' })])
+      expect(store.saved).toEqual([expect.objectContaining({ status: 'Failed', note: 'missed start time' })])
+    })
+
+    it('a Wake with Retry that is more than 5 minutes late starts making Attempts right away', () => {
+      const attempt = controlledAttempt()
+      const clock = fakeClock('2026-11-15T22:00:00')
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), now: clock.now })
+      entries.addWake({ clock: '05:00' }, { retry: true })
+
+      clock.set('2026-11-16T07:00:00')
+      entries.checkClock()
+
+      expect(attempt.calls).toBe(1)
+      expect(entries.list()).toEqual([expect.objectContaining({ status: 'Running' })])
+    })
+
+    it('a Wake with Retry missed while the app was closed starts at the first check after opening', () => {
+      const store = memoryStore()
+      const clock = fakeClock('2026-11-15T22:00:00')
+      createEntryList({ runWakeAttempt: controlledAttempt().run, store, now: clock.now }).addWake(
+        { clock: '05:00' },
+        { retry: true }
+      )
+
+      clock.set('2026-11-16T09:00:00')
+      const attempt = controlledAttempt()
+      createEntryList({ runWakeAttempt: attempt.run, store, now: clock.now }).checkClock()
+
+      expect(attempt.calls).toBe(1)
+    })
+  })
+
   describe('across restarts', () => {
     it('starts with an empty list when nothing has been saved yet', () => {
       const entries = createEntryList({ runWakeAttempt: controlledAttempt().run, store: memoryStore() })
