@@ -416,6 +416,178 @@ describe('entry list', () => {
     })
   })
 
+  describe('the Window', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      vi.setSystemTime(new Date('2026-11-16T10:01:00'))
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    /** The Window end as the settings keep it, with every value it was set to. */
+    function memoryWindowEnd(end?: string) {
+      let current = end === undefined ? undefined : new Date(end)
+      const set: Date[] = []
+      return {
+        get: () => current,
+        set: (next: Date) => {
+          current = next
+          set.push(next)
+        },
+        setTo: set
+      }
+    }
+
+    const setup = (end?: string) => {
+      const attempt = controlledAttempt()
+      const windowEnd = memoryWindowEnd(end)
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), windowEnd })
+      return { attempt, windowEnd, entries }
+    }
+
+    it('an answer when no Window end is set gives a Window end 5 hours after the Attempt, rounded down', async () => {
+      const { attempt, windowEnd, entries } = setup()
+      entries.addWake('Now')
+
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.setTo).toEqual([new Date('2026-11-16T15:00:00')])
+    })
+
+    it('an answer after the Window end gives a new Window end', async () => {
+      const { attempt, windowEnd, entries } = setup('2026-11-16T09:30:00')
+      entries.addWake('Now')
+
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.get()).toEqual(new Date('2026-11-16T15:00:00'))
+    })
+
+    it('an answer inside the known Window leaves the Window end unchanged', async () => {
+      const { attempt, windowEnd, entries } = setup('2026-11-16T12:00:00')
+      entries.addWake('Now')
+
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.setTo).toEqual([])
+    })
+
+    it('a failed Attempt never changes the Window end', async () => {
+      const { attempt, windowEnd, entries } = setup()
+      entries.addWake('Now')
+
+      attempt.finish('Failed')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.setTo).toEqual([])
+    })
+
+    it('a Wake whose Start time is at or before the Window end gets a warning, but still starts at its time', () => {
+      const { attempt, entries } = setup('2026-11-16T12:00:00')
+
+      const now = entries.addWake('Now')
+      const atEnd = entries.addWake({ clock: '12:00' })
+
+      expect(entries.list()).toEqual([
+        expect.objectContaining({ id: now.id, warning: 'starts inside the Window', status: 'Running' }),
+        expect.objectContaining({
+          id: atEnd.id,
+          warning: 'starts inside the Window',
+          startTime: { at: new Date('2026-11-16T12:00:00').toISOString() }
+        })
+      ])
+      expect(attempt.calls).toBe(1)
+    })
+
+    it('has no warning when no Window end is set or the Start time is after the Window end', () => {
+      expect(setup().entries.addWake('Now')).not.toHaveProperty('warning')
+      expect(setup('2026-11-16T12:00:00').entries.addWake({ clock: '12:01' })).not.toHaveProperty('warning')
+    })
+
+    it('a Waiting Wake gets or loses the warning when the user changes the Window end', () => {
+      const { windowEnd, entries } = setup()
+      entries.addWake({ clock: '12:00' })
+
+      windowEnd.set(new Date('2026-11-16T12:30:00'))
+      entries.refreshWarnings()
+      expect(entries.list()[0]).toMatchObject({ warning: 'starts inside the Window' })
+
+      windowEnd.set(new Date('2026-11-16T11:00:00'))
+      entries.refreshWarnings()
+      expect(entries.list()[0]).not.toHaveProperty('warning')
+    })
+
+    it('a recalculated Window end gives the warning to a Waiting Wake inside the new Window', async () => {
+      const { attempt, entries } = setup()
+      const later = entries.addWake({ clock: '12:00' })
+      entries.addWake('Now')
+
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(entries.list().find((entry) => entry.id === later.id)).toMatchObject({ warning: 'starts inside the Window' })
+    })
+
+    it('a Wake that has started keeps its warning when the Window end changes', async () => {
+      const { attempt, windowEnd, entries } = setup('2026-11-16T12:00:00')
+      entries.addWake('Now')
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(0)
+
+      windowEnd.set(new Date('2026-11-16T09:00:00'))
+      entries.refreshWarnings()
+
+      expect(entries.list()[0]).toMatchObject({ status: 'Done', warning: 'starts inside the Window' })
+    })
+
+    it('a Wake with the warning and Retry recalculates the Window when its successful Attempt comes after the Window end', async () => {
+      const { attempt, windowEnd, entries } = setup('2026-11-16T10:02:00')
+      expect(entries.addWake('Now', { retry: true })).toMatchObject({ warning: 'starts inside the Window' })
+
+      attempt.finish('Failed') // Attempt at 10:01
+      await vi.advanceTimersByTimeAsync(60_000)
+      attempt.finish('Failed') // Attempt at 10:02, at the Window end
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(windowEnd.setTo).toEqual([])
+      attempt.finish('Done') // Attempt at 10:03, after the Window end
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.setTo).toEqual([new Date('2026-11-16T15:00:00')])
+    })
+
+    it('a Wake with the warning whose answer comes at the Window end does not recalculate the Window', async () => {
+      const { attempt, windowEnd, entries } = setup('2026-11-16T10:02:00')
+      entries.addWake('Now', { retry: true })
+
+      attempt.finish('Failed') // Attempt at 10:01
+      await vi.advanceTimersByTimeAsync(60_000)
+      attempt.finish('Done') // Attempt at 10:02, at the Window end
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.setTo).toEqual([])
+    })
+
+    it('a Wake stopped while Claude answers still recalculates the Window', async () => {
+      const windowEnd = memoryWindowEnd()
+      const entries = createEntryList({
+        runWakeAttempt: (signal) =>
+          new Promise<AttemptReport>((resolve) => signal.addEventListener('abort', () => resolve({ outcome: 'Done' }))),
+        store: memoryStore(),
+        windowEnd
+      })
+      const entry = entries.addWake('Now', { retry: true })
+
+      entries.stop(entry.id)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.get()).toEqual(new Date('2026-11-16T15:00:00'))
+    })
+  })
+
   describe('log', () => {
     function recordingLog() {
       const lines: LogLine[] = []

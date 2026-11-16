@@ -22,6 +22,8 @@ export interface TokenTideApi {
   /** Sets the path to Claude. An empty path lets the app find Claude by itself again. */
   setClaudePath(path: string): Promise<ClaudeLocation>
   getStatusValues(): Promise<StatusValues>
+  /** Called when the app itself changes the values, such as a Wake that recalculates the Window end. */
+  onStatusValuesChanged(listener: (values: StatusValues) => void): () => void
   /** Sets the Window end to the next time the clock shows `clock` ("HH:MM"). */
   setWindowEnd(clock: string): Promise<StatusValues>
   setWeeklyReset(reset: WeeklyReset): Promise<StatusValues>
@@ -37,6 +39,7 @@ export const channels = {
   getClaude: 'claude:get',
   setClaudePath: 'claude:set-path',
   getStatusValues: 'status:get',
+  statusValuesChanged: 'status:changed',
   setWindowEnd: 'status:set-window-end',
   setWeeklyReset: 'status:set-weekly-reset'
 } as const

@@ -17,6 +17,8 @@ export interface Entry {
   status: EntryStatus
   /** A short text shown on the Entry that says why it got its status, such as "missed start time". */
   note?: string
+  /** A warning shown on the Entry, such as a Wake that starts inside the known Window and so starts no new one. */
+  warning?: string
 }
 
 /** What the user picks for a Wake in "+ Add", besides the Start time. */

@@ -83,3 +83,7 @@ _Avoid_: Error, crashed
 **Note**:
 A short text on the Entry that says why it got its status, such as "missed start time".
 _Avoid_: Reason, message, comment
+
+**Warning**:
+A short text on a Wake whose Start time is at or before the Window end, so it starts no new Window. It does not block the Wake or change its time.
+_Avoid_: Error, alert

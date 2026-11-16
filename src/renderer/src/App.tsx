@@ -45,6 +45,11 @@ export function App() {
             {entry.retry && <span className="entry-retry">Retry</span>}
             <span className={`entry-status status-${entry.status.toLowerCase()}`}>{entry.status}</span>
             {entry.note && <span className="entry-note">{entry.note}</span>}
+            {entry.warning && (
+              <span className="entry-warning" role="note">
+                ⚠ {entry.warning}
+              </span>
+            )}
             {entry.retry && entry.status === 'Running' && (
               <button type="button" className="entry-stop" onClick={() => void window.tokentide.stopEntry(entry.id)}>
                 Stop

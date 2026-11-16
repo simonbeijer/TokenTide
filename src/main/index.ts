@@ -35,6 +35,11 @@ const sendToAppWindows = (channel: string, value: unknown) => {
 
 const logStore = createLogStore(join(app.getPath('userData'), 'log.jsonl'))
 
+const statusValues = (): StatusValues => {
+  const { windowEnd, weeklyReset } = settings.load()
+  return { windowEnd, weeklyReset }
+}
+
 const entries = createEntryList({
   // Without a Claude to start, the Attempt fails at once; the Claude setting tells the user why.
   runWakeAttempt: async (signal) =>
@@ -43,6 +48,16 @@ const entries = createEntryList({
   log: (line) => {
     logStore.append(line)
     sendToAppWindows(channels.logLine, line)
+  },
+  windowEnd: {
+    get: () => {
+      const { windowEnd } = settings.load()
+      return windowEnd ? new Date(windowEnd) : undefined
+    },
+    set: (end) => {
+      settings.save({ ...settings.load(), windowEnd: end.toISOString() })
+      sendToAppWindows(channels.statusValuesChanged, statusValues())
+    }
   }
 })
 
@@ -81,13 +96,10 @@ ipcMain.handle(channels.setClaudePath, async (_event, path: string) => {
   return locate()
 })
 
-const statusValues = (): StatusValues => {
-  const { windowEnd, weeklyReset } = settings.load()
-  return { windowEnd, weeklyReset }
-}
 ipcMain.handle(channels.getStatusValues, () => statusValues())
 ipcMain.handle(channels.setWindowEnd, (_event, clock: string) => {
   settings.save({ ...settings.load(), windowEnd: windowEndFrom(clock, new Date()).toISOString() })
+  entries.refreshWarnings()
   return statusValues()
 })
 ipcMain.handle(channels.setWeeklyReset, (_event, reset: WeeklyReset) => {

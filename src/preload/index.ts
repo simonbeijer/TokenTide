@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import { channels, type TokenTideApi } from '../shared/api'
+import { channels, type StatusValues, type TokenTideApi } from '../shared/api'
 import type { Entry } from '../shared/entry'
 import type { LogLine } from '../shared/log'
 
@@ -21,6 +21,11 @@ const api: TokenTideApi = {
   getClaude: () => ipcRenderer.invoke(channels.getClaude),
   setClaudePath: (path) => ipcRenderer.invoke(channels.setClaudePath, path),
   getStatusValues: () => ipcRenderer.invoke(channels.getStatusValues),
+  onStatusValuesChanged(listener) {
+    const handler = (_event: IpcRendererEvent, values: StatusValues) => listener(values)
+    ipcRenderer.on(channels.statusValuesChanged, handler)
+    return () => ipcRenderer.removeListener(channels.statusValuesChanged, handler)
+  },
   setWindowEnd: (clock) => ipcRenderer.invoke(channels.setWindowEnd, clock),
   setWeeklyReset: (reset) => ipcRenderer.invoke(channels.setWeeklyReset, reset)
 }

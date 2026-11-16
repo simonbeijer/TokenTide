@@ -5,6 +5,7 @@ import type { AttemptReport } from './attemptOutcome'
 import type { EntryStore } from './entryStore'
 import { isMissed } from './lateness'
 import { nextOccurrence } from './startTime'
+import { startsInsideWindow, windowEndAfterAnswer } from './windowEnd'
 
 /** An Attempt with no answer after this long is ended and counts as failed. */
 export const attemptTimeout = 2 * 60_000
@@ -18,7 +19,17 @@ export interface EntryListDeps {
   now?: () => Date
   /** Gets one line per event: an Attempt that ends, or an Entry that changes status without an Attempt. */
   log?: (line: LogLine) => void
+  /** The Window end the user typed or the app last recalculated. Without it, Wakes neither warn nor recalculate. */
+  windowEnd?: WindowEndStore
 }
+
+export interface WindowEndStore {
+  get: () => Date | undefined
+  set: (end: Date) => void
+}
+
+/** The warning on a Wake whose Start time is at or before the Window end, so it starts no new Window. */
+export const insideWindowWarning = 'starts inside the Window'
 
 type Listener = (entries: Entry[]) => void
 
@@ -28,7 +39,13 @@ interface ActiveWake {
   nextAttempt?: ReturnType<typeof setTimeout>
 }
 
-export function createEntryList({ runWakeAttempt, store, now = () => new Date(), log = () => {} }: EntryListDeps) {
+export function createEntryList({
+  runWakeAttempt,
+  store,
+  now = () => new Date(),
+  log = () => {},
+  windowEnd
+}: EntryListDeps) {
   // Nothing can be running at start, so an Entry still marked Running was cut off by a crash.
   // Entries saved before Retry existed have no `retry` field and get false.
   const loaded = store.load()
@@ -57,9 +74,32 @@ export function createEntryList({ runWakeAttempt, store, now = () => new Date(),
     setStatus(id, status)
   }
 
+  const startOf = (startTime: StartTime) => (startTime === 'Now' ? now() : new Date(startTime.at))
+  // Only a warning: the Window end is typed by hand and can be old or wrong.
+  const withWarning = (entry: Entry): Entry => {
+    const { warning: _old, ...rest } = entry
+    return startsInsideWindow(startOf(entry.startTime), windowEnd?.get()) ? { ...rest, warning: insideWindowWarning } : rest
+  }
+  /** A Wake that has started keeps the warning it had, because the Window end it started under is what mattered. */
+  const refreshWarnings = () => {
+    const refreshed = entries.map((entry) => (entry.status === 'Waiting' ? withWarning(entry) : entry))
+    if (refreshed.every((entry, index) => entry.warning === entries[index].warning)) return
+    entries = refreshed
+    saveAndNotify()
+  }
+
+  const recalculateWindow = (attemptStart: Date) => {
+    if (!windowEnd) return
+    const end = windowEndAfterAnswer(windowEnd.get(), attemptStart)
+    if (!end) return
+    windowEnd.set(end)
+    refreshWarnings()
+  }
+
   const makeAttempt = async (id: string, retry: boolean) => {
     const wake = active.get(id)
     if (!wake) return
+    const attemptStart = now()
     const attempt = new AbortController()
     wake.attempt = attempt
     const timeout = setTimeout(() => attempt.abort(), attemptTimeout)
@@ -72,6 +112,7 @@ export function createEntryList({ runWakeAttempt, store, now = () => new Date(),
       clearTimeout(timeout)
     }
     const { outcome, ...output } = report
+    if (outcome === 'Done') recalculateWindow(attemptStart)
     // Stopped while the Attempt was ending. An answer still wins, because the Window has started then.
     if (active.get(id) !== wake) {
       if (outcome === 'Done') setStatus(id, 'Done')
@@ -119,12 +160,14 @@ export function createEntryList({ runWakeAttempt, store, now = () => new Date(),
     },
     addWake(choice: StartChoice, { retry = false }: WakeOptions = {}): Entry {
       const startTime: StartTime = choice === 'Now' ? 'Now' : { at: nextOccurrence(choice.clock, now()).toISOString() }
-      const entry: Entry = { id: randomUUID(), kind: 'Wake', startTime, retry, status: 'Waiting' }
+      const entry = withWarning({ id: randomUUID(), kind: 'Wake', startTime, retry, status: 'Waiting' })
       entries = [...entries, entry]
       saveAndNotify()
       if (startTime === 'Now') start(entry)
       return { ...entry }
     },
+    /** Gives or takes away the warning on each Waiting Wake. Called when the user changes the Window end. */
+    refreshWarnings,
     /** Ends a Running Entry on purpose: ends any running Attempt and makes no more. */
     stop(id: string) {
       const wake = active.get(id)

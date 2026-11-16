@@ -30,15 +30,21 @@ export function StatusPanel({ now }: Props) {
   const [weekdayDraft, setWeekdayDraft] = useState(1)
   const [resetClockDraft, setResetClockDraft] = useState('')
 
+  const showWindowEnd = (shown: StatusValues) => {
+    setValues(shown)
+    if (shown.windowEnd) setWindowEndDraft(formatClock(new Date(shown.windowEnd)))
+  }
+
   useEffect(() => {
     void window.tokentide.getStatusValues().then((loaded) => {
-      setValues(loaded)
-      if (loaded.windowEnd) setWindowEndDraft(formatClock(new Date(loaded.windowEnd)))
+      showWindowEnd(loaded)
       if (loaded.weeklyReset) {
         setWeekdayDraft(loaded.weeklyReset.weekday)
         setResetClockDraft(loaded.weeklyReset.clock)
       }
     })
+    // A Wake that recalculates the Window end shows the new value in the field, where the user can type over it.
+    return window.tokentide.onStatusValuesChanged(showWindowEnd)
   }, [])
 
   const windows = windowStatus(values.windowEnd ? new Date(values.windowEnd) : undefined, now)
