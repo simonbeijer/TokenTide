@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron'
 import { channels } from '../shared/api'
-import type { StartChoice } from '../shared/entry'
+import type { StartChoice, WakeOptions } from '../shared/entry'
 import { createEntryList } from './entryList'
 import { createEntryStore } from './entryStore'
 import { runWakeAttempt } from './wakeAttempt'
@@ -11,7 +11,7 @@ import { runWakeAttempt } from './wakeAttempt'
 const claudePath = join(homedir(), '.local', 'bin', 'claude')
 
 const entries = createEntryList({
-  runWakeAttempt: () => runWakeAttempt({ claudePath }),
+  runWakeAttempt: (signal) => runWakeAttempt({ claudePath, signal }),
   store: createEntryStore(join(app.getPath('userData'), 'entries.json'))
 })
 
@@ -36,7 +36,8 @@ function createAppWindow(): BrowserWindow {
 }
 
 ipcMain.handle(channels.listEntries, () => entries.list())
-ipcMain.handle(channels.addWake, (_event, start: StartChoice) => entries.addWake(start))
+ipcMain.handle(channels.addWake, (_event, start: StartChoice, options: WakeOptions) => entries.addWake(start, options))
+ipcMain.handle(channels.stopEntry, (_event, id: string) => entries.stop(id))
 
 entries.onChange((list) => {
   for (const appWindow of BrowserWindow.getAllWindows()) {

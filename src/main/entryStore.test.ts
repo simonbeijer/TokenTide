@@ -35,8 +35,8 @@ describe('entry store', () => {
   it('loads the Entries that were saved, even into a folder that did not exist', () => {
     const file = join(folder, 'data', 'entries.json')
     const saved: Entry[] = [
-      { id: 'a', kind: 'Wake', startTime: 'Now', status: 'Done' },
-      { id: 'b', kind: 'Wake', startTime: 'Now', status: 'Failed' }
+      { id: 'a', kind: 'Wake', startTime: 'Now', retry: false, status: 'Done' },
+      { id: 'b', kind: 'Wake', startTime: 'Now', retry: true, status: 'Failed' }
     ]
 
     createEntryStore(file).save(saved)

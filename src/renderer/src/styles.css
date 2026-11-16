@@ -48,6 +48,7 @@ body {
 
 .entry {
   display: flex;
+  align-items: center;
   gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid color-mix(in srgb, GrayText 30%, transparent);
@@ -63,4 +64,12 @@ body {
 
 .status-failed {
   color: crimson;
+}
+
+.status-stopped {
+  color: GrayText;
+}
+
+.entry-retry {
+  color: GrayText;
 }

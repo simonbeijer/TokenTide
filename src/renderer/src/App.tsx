@@ -21,13 +21,19 @@ export function App() {
   return (
     <main className="app">
       <section className="status-panel" aria-label="Status panel" />
-      <AddEntry onAddWake={(start) => void window.tokentide.addWake(start)} />
+      <AddEntry onAddWake={(start, options) => void window.tokentide.addWake(start, options)} />
       <ul className="entry-list" aria-label="Entries">
         {entries.map((entry) => (
           <li key={entry.id} className="entry">
             <span className="entry-kind">{entry.kind}</span>
             <span className="entry-start">{startTimeLabel(entry.startTime, now)}</span>
+            {entry.retry && <span className="entry-retry">Retry</span>}
             <span className={`entry-status status-${entry.status.toLowerCase()}`}>{entry.status}</span>
+            {entry.retry && entry.status === 'Running' && (
+              <button type="button" className="entry-stop" onClick={() => void window.tokentide.stopEntry(entry.id)}>
+                Stop
+              </button>
+            )}
           </li>
         ))}
       </ul>

@@ -1,4 +1,4 @@
-export type EntryStatus = 'Waiting' | 'Running' | 'Done' | 'Failed'
+export type EntryStatus = 'Waiting' | 'Running' | 'Done' | 'Stopped' | 'Failed'
 
 export type EntryKind = 'Wake'
 
@@ -12,5 +12,12 @@ export interface Entry {
   id: string
   kind: EntryKind
   startTime: StartTime
+  /** Keep making Attempts, one a minute, until one succeeds or the user presses Stop. */
+  retry: boolean
   status: EntryStatus
+}
+
+/** What the user picks for a Wake in "+ Add", besides the Start time. */
+export interface WakeOptions {
+  retry?: boolean
 }

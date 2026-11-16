@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Entry } from '../shared/entry'
 import type { AttemptOutcome } from './attemptOutcome'
 import { createEntryList } from './entryList'
@@ -16,17 +16,26 @@ function memoryStore(saved: Entry[] = []): EntryStore & { saved: Entry[] } {
   }
 }
 
+/** A stand-in for Claude: each Attempt waits until the test finishes it, and ends as Failed when it is aborted. */
 function controlledAttempt() {
   let finish: (outcome: AttemptOutcome) => void = () => {}
+  let signal: AbortSignal | undefined
   let calls = 0
   return {
-    run: () => {
+    run: (attemptSignal: AbortSignal) => {
       calls++
-      return new Promise<AttemptOutcome>((resolve) => (finish = resolve))
+      signal = attemptSignal
+      return new Promise<AttemptOutcome>((resolve) => {
+        finish = resolve
+        attemptSignal.addEventListener('abort', () => resolve('Failed'))
+      })
     },
     finish: (outcome: AttemptOutcome) => finish(outcome),
     get calls() {
       return calls
+    },
+    get aborted() {
+      return signal?.aborted ?? false
     }
   }
 }
@@ -155,24 +164,178 @@ describe('entry list', () => {
 
       const after = createEntryList({ runWakeAttempt: controlledAttempt().run, store })
 
-      expect(after.list()).toEqual([{ id: entry.id, kind: 'Wake', startTime: 'Now', status: 'Done' }])
+      expect(after.list()).toEqual([{ id: entry.id, kind: 'Wake', startTime: 'Now', retry: false, status: 'Done' }])
     })
 
     it('gives Failed to an Entry still marked Running at start, and does not start it again', () => {
       const store = memoryStore([
-        { id: 'cut-off', kind: 'Wake', startTime: 'Now', status: 'Running' },
-        { id: 'finished', kind: 'Wake', startTime: 'Now', status: 'Done' }
+        { id: 'cut-off', kind: 'Wake', startTime: 'Now', retry: true, status: 'Running' },
+        { id: 'finished', kind: 'Wake', startTime: 'Now', retry: false, status: 'Done' }
       ])
       const attempt = controlledAttempt()
 
       const entries = createEntryList({ runWakeAttempt: attempt.run, store })
 
       expect(entries.list()).toEqual([
-        { id: 'cut-off', kind: 'Wake', startTime: 'Now', status: 'Failed' },
-        { id: 'finished', kind: 'Wake', startTime: 'Now', status: 'Done' }
+        { id: 'cut-off', kind: 'Wake', startTime: 'Now', retry: true, status: 'Failed' },
+        { id: 'finished', kind: 'Wake', startTime: 'Now', retry: false, status: 'Done' }
       ])
       expect(store.saved.map((entry) => entry.status)).toEqual(['Failed', 'Done'])
       expect(attempt.calls).toBe(0)
+    })
+
+    it('loads an Entry saved before Retry existed as a Wake without Retry', () => {
+      const saved = [{ id: 'old', kind: 'Wake', startTime: 'Now', status: 'Done' }] as unknown as Entry[]
+
+      const entries = createEntryList({ runWakeAttempt: controlledAttempt().run, store: memoryStore(saved) })
+
+      expect(entries.list()).toEqual([{ id: 'old', kind: 'Wake', startTime: 'Now', retry: false, status: 'Done' }])
+    })
+  })
+
+  describe('Retry', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const statusOf = (entries: ReturnType<typeof createEntryList>) => entries.list()[0].status
+
+    it('a Wake has no Retry unless it is asked for', () => {
+      const entries = createEntryList({ runWakeAttempt: controlledAttempt().run, store: memoryStore() })
+
+      expect(entries.addWake('Now')).toMatchObject({ retry: false })
+      expect(entries.addWake('Now', { retry: true })).toMatchObject({ retry: true })
+    })
+
+    it('without Retry, a failed Attempt makes the Wake Failed and no new Attempt is made', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      entries.addWake('Now')
+
+      attempt.finish('Failed')
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(statusOf(entries)).toBe('Failed')
+      expect(attempt.calls).toBe(1)
+    })
+
+    it('with Retry, a failed Attempt is followed by a new one a minute later, and the Wake stays Running', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      entries.addWake('Now', { retry: true })
+
+      attempt.finish('Failed')
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(attempt.calls).toBe(1)
+      expect(statusOf(entries)).toBe('Running')
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(attempt.calls).toBe(2)
+      expect(statusOf(entries)).toBe('Running')
+
+      attempt.finish('Failed')
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(attempt.calls).toBe(3)
+      expect(statusOf(entries)).toBe('Running')
+    })
+
+    it('with Retry, an Attempt that throws counts as failed and is tried again', async () => {
+      let calls = 0
+      const entries = createEntryList({
+        runWakeAttempt: () => (++calls === 1 ? Promise.reject(new Error('boom')) : new Promise(() => {})),
+        store: memoryStore()
+      })
+      entries.addWake('Now', { retry: true })
+
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      expect(calls).toBe(2)
+      expect(statusOf(entries)).toBe('Running')
+    })
+
+    it('with Retry, the first Attempt that gets an answer makes the Wake Done, and no more Attempts are made', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      entries.addWake('Now', { retry: true })
+      attempt.finish('Failed')
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(statusOf(entries)).toBe('Done')
+      expect(attempt.calls).toBe(2)
+    })
+
+    it.each([false, true])('an Attempt with no answer after 2 minutes is ended and counts as failed (Retry: %s)', async (retry) => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      entries.addWake('Now', { retry })
+
+      await vi.advanceTimersByTimeAsync(119_000)
+      expect(attempt.aborted).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(attempt.aborted).toBe(true)
+      expect(statusOf(entries)).toBe(retry ? 'Running' : 'Failed')
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(attempt.calls).toBe(retry ? 2 : 1)
+    })
+
+    it('a Wake is Done when Claude answers while its timed-out Attempt is being ended', async () => {
+      const entries = createEntryList({
+        runWakeAttempt: (signal) =>
+          new Promise<AttemptOutcome>((resolve) => signal.addEventListener('abort', () => resolve('Done'))),
+        store: memoryStore()
+      })
+      entries.addWake('Now', { retry: true })
+
+      await vi.advanceTimersByTimeAsync(120_000)
+
+      expect(statusOf(entries)).toBe('Done')
+    })
+
+    it('Stop during an Attempt ends that Attempt, makes no more Attempts and gives Stopped', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      const entry = entries.addWake('Now', { retry: true })
+
+      entries.stop(entry.id)
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(attempt.aborted).toBe(true)
+      expect(statusOf(entries)).toBe('Stopped')
+      expect(attempt.calls).toBe(1)
+    })
+
+    it('Stop between two Attempts makes no more Attempts and gives Stopped', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      const entry = entries.addWake('Now', { retry: true })
+      attempt.finish('Failed')
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      entries.stop(entry.id)
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(statusOf(entries)).toBe('Stopped')
+      expect(attempt.calls).toBe(1)
+    })
+
+    it('Stop does nothing to a Wake that is not Running', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      const entry = entries.addWake('Now', { retry: true })
+      attempt.finish('Done')
+      await vi.advanceTimersByTimeAsync(0)
+
+      entries.stop(entry.id)
+
+      expect(statusOf(entries)).toBe('Done')
     })
   })
 })

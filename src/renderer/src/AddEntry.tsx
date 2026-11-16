@@ -1,19 +1,21 @@
 import { useState } from 'react'
-import type { StartChoice } from '../../shared/entry'
+import type { StartChoice, WakeOptions } from '../../shared/entry'
 
 interface Props {
-  onAddWake: (start: StartChoice) => void
+  onAddWake: (start: StartChoice, options: WakeOptions) => void
 }
 
 /** The "+ Add" flow. Only Wake exists so far. */
 export function AddEntry({ onAddWake }: Props) {
   const [open, setOpen] = useState(false)
   const [wake, setWake] = useState(true)
+  const [retry, setRetry] = useState(false)
   const [startAt, setStartAt] = useState<'now' | 'clock'>('now')
   const [clock, setClock] = useState('')
 
   const close = () => {
     setOpen(false)
+    setRetry(false)
     setStartAt('now')
     setClock('')
   }
@@ -34,13 +36,18 @@ export function AddEntry({ onAddWake }: Props) {
       onSubmit={(event) => {
         event.preventDefault()
         if (!ready) return
-        onAddWake(startAt === 'now' ? 'Now' : { clock })
+        onAddWake(startAt === 'now' ? 'Now' : { clock }, { retry })
         close()
       }}
     >
       <label>
         <input type="checkbox" checked={wake} onChange={(event) => setWake(event.target.checked)} /> Wake
       </label>
+      {wake && (
+        <label title="One Attempt a minute until one succeeds">
+          <input type="checkbox" checked={retry} onChange={(event) => setRetry(event.target.checked)} /> Retry
+        </label>
+      )}
       <fieldset>
         <legend>Start time</legend>
         <label>
