@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -82,6 +82,51 @@ describe('runRunAttempt', () => {
     let answers = 0
     await setup().attempt({ onAnswer: () => answers++ })
     expect(answers).toBe(1)
+  })
+
+  describe('when stopped', () => {
+    /** Stops the Run once Claude has started and listens for signals. */
+    const stopWhenListening = (controller: AbortController) => (line: string) => {
+      if (line.includes('"subtype":"status"')) controller.abort()
+    }
+
+    const stoppedRun = async (vars: Record<string, string>, timing: { terminateAfter?: number; killAfter?: number } = {}) => {
+      const signals = join(tempFolder(), 'signals.txt')
+      const run = setup()
+      const controller = new AbortController()
+      const report = await runRunAttempt({
+        claudePath: fakeClaude,
+        env: withEnv({ FAKE_CLAUDE_RECORD: run.record, FAKE_CLAUDE_SCENARIO: 'hang', FAKE_CLAUDE_SIGNALS: signals, ...vars }),
+        run: run.options,
+        outputFile: run.outputFile,
+        signal: controller.signal,
+        onLine: stopWhenListening(controller),
+        ...timing
+      })
+      const received = existsSync(signals) ? readFileSync(signals, 'utf8').trim().split('\n') : []
+      return { report, received, saved: readFileSync(run.outputFile, 'utf8') }
+    }
+
+    it('interrupts Claude, which then exits, and keeps the output saved so far', async () => {
+      const { report, received, saved } = await stoppedRun({})
+
+      expect(report.outcome).toBe('Failed')
+      expect(received).toEqual(['SIGINT'])
+      expect(saved).toContain('"text":"Hi!"')
+    })
+
+    it('terminates Claude when it has not exited shortly after the interrupt', async () => {
+      const { received } = await stoppedRun({ FAKE_CLAUDE_IGNORE_SIGINT: '1' }, { terminateAfter: 50 })
+      expect(received).toEqual(['SIGINT', 'SIGTERM'])
+    })
+
+    it('leaves no Claude behind even when it ignores both the interrupt and the terminate', async () => {
+      const { report } = await stoppedRun(
+        { FAKE_CLAUDE_IGNORE_SIGINT: '1', FAKE_CLAUDE_IGNORE_SIGTERM: '1' },
+        { terminateAfter: 50, killAfter: 50 }
+      )
+      expect(report.outcome).toBe('Failed')
+    })
   })
 
   it('does not tell of an answer when Claude never answered', async () => {

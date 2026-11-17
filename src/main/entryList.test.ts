@@ -820,6 +820,80 @@ describe('Run', () => {
     expect(entries.list()).toEqual([expect.objectContaining({ kind: 'Run', status: 'Waiting', run: options })])
   })
 
+  describe('Hard stop', () => {
+    it('is the first time the clock shows it after the Start time', () => {
+      const clock = fakeClock('2026-11-15T22:00:00')
+      const { entries } = setup({ now: clock.now })
+
+      const entry = entries.addRun({ clock: '04:00' }, { ...options, hardStop: '03:00' })
+
+      expect(entry.hardStopAt).toBe(new Date('2026-11-17T03:00:00').toISOString())
+    })
+
+    it('a Run still Waiting when its Hard stop passes never starts and gets Stopped with the Note "hard stop"', () => {
+      const lines: LogLine[] = []
+      const clock = fakeClock('2026-11-15T22:00:00')
+      const { run, entries } = setup({ now: clock.now, log: (line) => lines.push(line) })
+      const entry = entries.addRun({ clock: '04:00' }, { ...options, hardStop: '03:00' })
+
+      // The computer slept past both the Start time and the Hard stop.
+      clock.set('2026-11-17T03:00:00')
+      entries.checkClock()
+
+      expect(run.started).toHaveLength(0)
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Stopped', note: 'hard stop' })])
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Stopped', note: 'hard stop' })])
+    })
+
+    it('a Running Run is stopped when its Hard stop passes and gets Stopped with the Note "hard stop"', async () => {
+      const lines: LogLine[] = []
+      const clock = fakeClock('2026-11-16T10:00:00')
+      const { run, entries } = setup({ now: clock.now, log: (line) => lines.push(line) })
+      const entry = entries.addRun('Now', { ...options, hardStop: '12:00' })
+
+      clock.set('2026-11-16T11:59:59')
+      entries.checkClock()
+      expect(run.aborted).toBe(false)
+
+      clock.set('2026-11-16T12:00:10')
+      entries.checkClock()
+      await flush()
+
+      expect(run.aborted).toBe(true)
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Stopped', note: 'hard stop' })])
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Stopped', note: 'hard stop' })])
+    })
+
+    it('a Run without a Hard stop is never stopped by the clock', () => {
+      const clock = fakeClock('2026-11-16T10:00:00')
+      const { run, entries } = setup({ now: clock.now })
+      const entry = entries.addRun('Now', options)
+
+      clock.set('2026-11-20T10:00:00')
+      entries.checkClock()
+
+      expect(entry.hardStopAt).toBeUndefined()
+      expect(run.aborted).toBe(false)
+      expect(entries.list()[0].status).toBe('Running')
+    })
+  })
+
+  describe('stop button', () => {
+    it('Stop ends a Running Run and gives Stopped, with one Stopped line once Claude has exited', async () => {
+      const lines: LogLine[] = []
+      const { run, entries } = setup({ log: (line) => lines.push(line) })
+      const entry = entries.addRun('Now', options)
+
+      entries.stop(entry.id)
+      await flush()
+
+      expect(run.aborted).toBe(true)
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Stopped' })])
+      expect(entries.list()[0].note).toBeUndefined()
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Stopped' })])
+    })
+  })
+
   describe('with fake timers', () => {
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })

@@ -23,6 +23,7 @@ export function AddEntry({ onAddWake, onAddRun }: Props) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('Auto')
   const [model, setModel] = useState<string>(models[0])
   const [prompt, setPrompt] = useState('')
+  const [hardStop, setHardStop] = useState('')
   const [startAt, setStartAt] = useState<'now' | 'clock'>('now')
   const [clock, setClock] = useState('')
 
@@ -38,6 +39,7 @@ export function AddEntry({ onAddWake, onAddRun }: Props) {
     setPermissionMode('Auto')
     setModel(models[0])
     setPrompt('')
+    setHardStop('')
     setStartAt('now')
     setClock('')
   }
@@ -70,7 +72,7 @@ export function AddEntry({ onAddWake, onAddRun }: Props) {
         const start: StartChoice = startAt === 'now' ? 'Now' : { clock }
         // The prompt is sent exactly as written, so it is not trimmed.
         if (kind === 'Wake') onAddWake(start, { retry })
-        else onAddRun(start, { project, prompt, permissionMode, model })
+        else onAddRun(start, { project, prompt, permissionMode, model, ...(hardStop && { hardStop }) })
         close()
       }}
     >
@@ -135,6 +137,10 @@ export function AddEntry({ onAddWake, onAddRun }: Props) {
           <label className="add-field">
             Prompt
             <textarea rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+          </label>
+          <label className="add-field" title="Optional. The first time the clock shows it after the Start time, the Run is stopped">
+            Hard stop
+            <input type="time" aria-label="Hard stop" value={hardStop} onChange={(event) => setHardStop(event.target.value)} />
           </label>
         </>
       )}

@@ -23,6 +23,8 @@ export interface RunOptions {
   prompt: string
   permissionMode: PermissionMode
   model: string
+  /** A clock time "HH:MM" after which the Run must not be running. Without it, the Run runs until Claude exits or the user stops it. */
+  hardStop?: string
 }
 
 export interface Entry {
@@ -38,6 +40,8 @@ export interface Entry {
   warning?: string
   /** What a Run does. Missing for a Wake. */
   run?: RunOptions
+  /** When a Run's Hard stop passes, as an ISO timestamp: the first time the clock shows it after the Start time. */
+  hardStopAt?: string
 }
 
 /** What the user picks for a Wake in "+ Add", besides the Start time. */

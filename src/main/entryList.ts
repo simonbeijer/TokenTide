@@ -3,6 +3,7 @@ import type { Entry, EntryStatus, RunOptions, StartChoice, StartTime, WakeOption
 import type { LogLine } from '../shared/log'
 import type { AttemptReport } from './attemptOutcome'
 import type { EntryStore } from './entryStore'
+import { hardStopAfter, hardStopPassed } from './hardStop'
 import { isMissed } from './lateness'
 import { nextOccurrence } from './startTime'
 import { startsInsideWindow, windowEndAfterAnswer } from './windowEnd'
@@ -42,7 +43,12 @@ type Listener = (entries: Entry[]) => void
 interface ActiveEntry {
   attempt?: AbortController
   nextAttempt?: ReturnType<typeof setTimeout>
+  /** Set when the Entry has been stopped: the Note it is stopped with, if any. */
+  stopped?: { note?: string }
 }
+
+/** The Note on a Run stopped by its Hard stop. */
+const hardStopNote = 'hard stop'
 
 export function createEntryList({
   runWakeAttempt,
@@ -77,9 +83,9 @@ export function createEntryList({
     entries = entries.map((entry) => (entry.id === id ? { ...entry, status, ...(note && { note }) } : entry))
     saveAndNotify()
   }
-  const finish = (id: string, status: EntryStatus) => {
+  const finish = (id: string, status: EntryStatus, note?: string) => {
     active.delete(id)
-    setStatus(id, status)
+    setStatus(id, status, note)
   }
 
   const startOf = (startTime: StartTime) => (startTime === 'Now' ? now() : new Date(startTime.at))
@@ -125,9 +131,9 @@ export function createEntryList({
     const { outcome, ...output } = report
     if (outcome === 'Done') recalculateWindow(attemptStart)
     // Stopped while the Attempt was ending. An answer still wins, because the Window has started then.
-    if (active.get(id) !== wake) {
+    if (wake.stopped) {
       if (outcome === 'Done') setStatus(id, 'Done')
-      logEvent(entryById(id), { status: outcome === 'Done' ? 'Done' : 'Stopped', ...output })
+      logEvent(entryById(id), outcome === 'Done' ? { status: 'Done', ...output } : { status: 'Stopped', ...output, ...wake.stopped })
       return
     }
     logEvent(entryById(id), { status: outcome, ...output })
@@ -153,9 +159,23 @@ export function createEntryList({
       report = { outcome: 'Failed' }
     }
     const { outcome, ...output } = report
-    const stopped = active.get(entry.id) !== run
-    logEvent(entry, { status: stopped ? 'Stopped' : outcome, ...output })
-    if (!stopped) finish(entry.id, outcome)
+    if (run.stopped) logEvent(entry, { status: 'Stopped', ...output, ...run.stopped })
+    else {
+      logEvent(entry, { status: outcome, ...output })
+      finish(entry.id, outcome)
+    }
+  }
+
+  /** Ends a Running Entry on purpose: ends any running Attempt and makes no more. */
+  const stop = (id: string, note?: string) => {
+    const activeEntry = active.get(id)
+    if (!activeEntry || activeEntry.stopped) return
+    activeEntry.stopped = { ...(note && { note }) }
+    clearTimeout(activeEntry.nextAttempt)
+    activeEntry.attempt?.abort()
+    // A running Attempt adds the Stopped line when it has ended; between Attempts there is none to do it.
+    if (!activeEntry.attempt) logEvent(entryById(id), { status: 'Stopped', ...activeEntry.stopped })
+    finish(id, 'Stopped', note)
   }
 
   const start = (entry: Entry) => {
@@ -166,8 +186,16 @@ export function createEntryList({
   }
 
   const add = (choice: StartChoice, fields: Omit<Entry, 'id' | 'startTime' | 'status'>): Entry => {
-    const startTime: StartTime = choice === 'Now' ? 'Now' : { at: nextOccurrence(choice.clock, now()).toISOString() }
-    const entry = withWarning({ id: randomUUID(), startTime, status: 'Waiting', ...fields })
+    const startAt = choice === 'Now' ? now() : nextOccurrence(choice.clock, now())
+    const startTime: StartTime = choice === 'Now' ? 'Now' : { at: startAt.toISOString() }
+    const hardStop = fields.run?.hardStop
+    const entry = withWarning({
+      id: randomUUID(),
+      startTime,
+      status: 'Waiting',
+      ...fields,
+      ...(hardStop && { hardStopAt: hardStopAfter(hardStop, startAt).toISOString() })
+    })
     entries = [...entries, entry]
     saveAndNotify()
     if (startTime === 'Now') start(entry)
@@ -187,6 +215,15 @@ export function createEntryList({
      */
     checkClock() {
       const current = now()
+      // A Run past its Hard stop must not be running, and must not start: stop it before anything is started.
+      for (const entry of entries) {
+        if (!entry.hardStopAt || !hardStopPassed(new Date(entry.hardStopAt), current)) continue
+        if (entry.status === 'Running') stop(entry.id, hardStopNote)
+        else if (entry.status === 'Waiting') {
+          setStatus(entry.id, 'Stopped', hardStopNote)
+          logEvent(entry, { status: 'Stopped', note: hardStopNote })
+        }
+      }
       for (const entry of entries) {
         if (entry.status !== 'Waiting' || entry.startTime === 'Now') continue
         const startTime = new Date(entry.startTime.at)
@@ -206,15 +243,7 @@ export function createEntryList({
     },
     /** Gives or takes away the warning on each Waiting Wake. Called when the user changes the Window end. */
     refreshWarnings,
-    /** Ends a Running Entry on purpose: ends any running Attempt and makes no more. */
-    stop(id: string) {
-      const wake = active.get(id)
-      if (!wake) return
-      clearTimeout(wake.nextAttempt)
-      wake.attempt?.abort()
-      // A running Attempt adds the Stopped line when it has ended; between Attempts there is none to do it.
-      if (!wake.attempt) logEvent(entryById(id), { status: 'Stopped' })
-      finish(id, 'Stopped')
-    }
+    /** The stop button: ends a Running Entry on purpose. */
+    stop: (id: string) => stop(id)
   }
 }

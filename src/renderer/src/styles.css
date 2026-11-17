@@ -126,6 +126,7 @@ body {
 }
 
 .entry-retry,
+.entry-hard-stop,
 .entry-run {
   color: GrayText;
 }

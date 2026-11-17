@@ -54,6 +54,11 @@ export function App() {
                 {projectName(entry.run.project)} · {entry.run.model}
               </span>
             )}
+            {entry.hardStopAt && (
+              <span className="entry-hard-stop" title="Hard stop">
+                stops {startTimeLabel({ at: entry.hardStopAt }, now)}
+              </span>
+            )}
             <span className={`entry-status status-${entry.status.toLowerCase()}`}>{entry.status}</span>
             {entry.note && <span className="entry-note">{entry.note}</span>}
             {entry.warning && (
@@ -61,7 +66,7 @@ export function App() {
                 ⚠ {entry.warning}
               </span>
             )}
-            {entry.retry && entry.status === 'Running' && (
+            {(entry.kind === 'Run' || entry.retry) && entry.status === 'Running' && (
               <button type="button" className="entry-stop" onClick={() => void window.tokentide.stopEntry(entry.id)}>
                 Stop
               </button>
