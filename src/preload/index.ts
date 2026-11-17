@@ -6,6 +6,9 @@ import type { LogLine } from '../shared/log'
 const api: TokenTideApi = {
   listEntries: () => ipcRenderer.invoke(channels.listEntries),
   addWake: (start, options) => ipcRenderer.invoke(channels.addWake, start, options),
+  addRun: (start, options) => ipcRenderer.invoke(channels.addRun, start, options),
+  listProjects: () => ipcRenderer.invoke(channels.listProjects),
+  chooseProject: () => ipcRenderer.invoke(channels.chooseProject),
   stopEntry: (id) => ipcRenderer.invoke(channels.stopEntry, id),
   onEntriesChanged(listener) {
     const handler = (_event: IpcRendererEvent, entries: Entry[]) => listener(entries)

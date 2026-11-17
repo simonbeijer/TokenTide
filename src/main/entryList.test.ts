@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Entry } from '../shared/entry'
+import type { Entry, RunOptions } from '../shared/entry'
 import type { LogLine } from '../shared/log'
 import type { AttemptOutcome, AttemptReport } from './attemptOutcome'
 import { createEntryList } from './entryList'
@@ -721,6 +721,211 @@ describe('entry list', () => {
       createEntryList({ runWakeAttempt: controlledAttempt().run, store, now: () => new Date('2026-11-16T07:00:00Z'), log })
 
       expect(lines).toEqual([{ time: '2026-11-16T07:00:00.000Z', status: 'Failed', note: 'cut off by a restart' }])
+    })
+  })
+})
+
+describe('Run', () => {
+  const options: RunOptions = { project: '/Users/me/dev/shop', prompt: 'Solve one issue', permissionMode: 'Auto', model: 'opus' }
+
+  /** A stand-in for Claude doing a Run: waits until the test answers or finishes it. */
+  function controlledRun() {
+    let finish: (report: AttemptReport) => void = () => {}
+    let answer: () => void = () => {}
+    let signal: AbortSignal | undefined
+    const started: Entry[] = []
+    return {
+      run: (entry: Entry, runSignal: AbortSignal, onAnswer: () => void) => {
+        started.push(entry)
+        signal = runSignal
+        answer = onAnswer
+        return new Promise<AttemptReport>((resolve) => {
+          finish = resolve
+          runSignal.addEventListener('abort', () => resolve({ outcome: 'Failed' }))
+        })
+      },
+      answer: () => answer(),
+      finish: (outcome: AttemptOutcome, output: Omit<AttemptReport, 'outcome'> = {}) => finish({ outcome, ...output }),
+      started,
+      get aborted() {
+        return signal?.aborted ?? false
+      }
+    }
+  }
+
+  const setup = (extra: Partial<Parameters<typeof createEntryList>[0]> = {}) => {
+    const run = controlledRun()
+    const wake = controlledAttempt()
+    const entries = createEntryList({ runWakeAttempt: wake.run, runRunAttempt: run.run, store: memoryStore(), ...extra })
+    return { run, wake, entries }
+  }
+
+  it('a Run with Start time Now lands in the list with its Project, prompt, mode and model, and starts right away', () => {
+    const { run, wake, entries } = setup()
+    const seen: string[] = []
+    entries.onChange((list) => seen.push(list[0].status))
+
+    const entry = entries.addRun('Now', options)
+
+    expect(entry).toMatchObject({ kind: 'Run', startTime: 'Now', retry: false, run: options })
+    expect(seen).toEqual(['Waiting', 'Running'])
+    expect(run.started).toEqual([expect.objectContaining({ id: entry.id, run: options })])
+    expect(wake.calls).toBe(0)
+  })
+
+  it.each<AttemptOutcome>(['Done', 'Failed'])('the Run becomes %s when Claude ends that way', async (outcome) => {
+    const { run, entries } = setup()
+    const entry = entries.addRun('Now', options)
+
+    run.finish(outcome)
+    await flush()
+
+    expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: outcome })])
+  })
+
+  it('the Run is Failed when starting Claude throws', async () => {
+    const entries = createEntryList({
+      runWakeAttempt: controlledAttempt().run,
+      runRunAttempt: () => Promise.reject(new Error('boom')),
+      store: memoryStore()
+    })
+    const entry = entries.addRun('Now', options)
+
+    await flush()
+
+    expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Failed' })])
+  })
+
+  it('a Run at a clock time waits, then starts at the first clock check on or after its Start time', () => {
+    const clock = fakeClock('2026-11-15T22:00:00')
+    const { run, entries } = setup({ now: clock.now })
+    const entry = entries.addRun({ clock: '04:00' }, options)
+
+    expect(entry).toMatchObject({ status: 'Waiting', startTime: { at: new Date('2026-11-16T04:00:00').toISOString() } })
+    entries.checkClock()
+    expect(run.started).toHaveLength(0)
+
+    clock.set('2026-11-16T04:00:10')
+    entries.checkClock()
+    expect(run.started).toHaveLength(1)
+  })
+
+  it('a Run keeps its Project, prompt, mode and model across a restart', () => {
+    const store = memoryStore()
+    const clock = fakeClock('2026-11-15T22:00:00')
+    setup({ store, now: clock.now }).entries.addRun({ clock: '04:00' }, options)
+
+    const { entries } = setup({ store, now: clock.now })
+
+    expect(entries.list()).toEqual([expect.objectContaining({ kind: 'Run', status: 'Waiting', run: options })])
+  })
+
+  describe('with fake timers', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      vi.setSystemTime(new Date('2026-11-16T10:01:00'))
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('a Run is not ended after 2 minutes, because it works until Claude exits by itself', async () => {
+      const { run, entries } = setup()
+      entries.addRun('Now', options)
+
+      await vi.advanceTimersByTimeAsync(3 * 60 * 60_000)
+
+      expect(run.aborted).toBe(false)
+      expect(entries.list()[0].status).toBe('Running')
+    })
+
+    function memoryWindowEnd(end?: string) {
+      let current = end === undefined ? undefined : new Date(end)
+      return { get: () => current, set: (next: Date) => void (current = next) }
+    }
+
+    it('an answer when no Window end is set gives a Window end from the start of the Run, while it is still Running', async () => {
+      const windowEnd = memoryWindowEnd()
+      const { run, entries } = setup({ windowEnd })
+      entries.addRun('Now', options)
+
+      await vi.advanceTimersByTimeAsync(40_000)
+      run.answer()
+
+      expect(windowEnd.get()).toEqual(new Date('2026-11-16T15:00:00'))
+      expect(entries.list()[0].status).toBe('Running')
+    })
+
+    it('an answer after the Window end gives a new Window end', () => {
+      const windowEnd = memoryWindowEnd('2026-11-16T09:30:00')
+      const { run, entries } = setup({ windowEnd })
+      entries.addRun('Now', options)
+
+      run.answer()
+
+      expect(windowEnd.get()).toEqual(new Date('2026-11-16T15:00:00'))
+    })
+
+    it('a Run inside the known Window changes nothing', () => {
+      const windowEnd = memoryWindowEnd('2026-11-16T12:00:00')
+      const { run, entries } = setup({ windowEnd })
+      entries.addRun('Now', options)
+
+      run.answer()
+
+      expect(windowEnd.get()).toEqual(new Date('2026-11-16T12:00:00'))
+    })
+
+    it('a Run that never got an answer does not change the Window end', async () => {
+      const windowEnd = memoryWindowEnd('2026-11-16T09:30:00')
+      const { run, entries } = setup({ windowEnd })
+      entries.addRun('Now', options)
+
+      run.finish('Failed')
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(windowEnd.get()).toEqual(new Date('2026-11-16T09:30:00'))
+    })
+
+    it('a Run gets no warning, even when it starts inside the known Window', () => {
+      const { entries } = setup({ windowEnd: memoryWindowEnd('2026-11-16T12:00:00') })
+      expect(entries.addRun({ clock: '11:00' }, options).warning).toBeUndefined()
+    })
+  })
+
+  describe('log', () => {
+    it('the line for a Run has its Project', async () => {
+      const lines: LogLine[] = []
+      const clock = fakeClock('2026-11-16T05:00:00Z')
+      const { run, entries } = setup({ now: clock.now, log: (line) => lines.push(line) })
+      entries.addRun('Now', options)
+
+      run.finish('Done', { sessionId: 'abc', lastLine: 'Solved #4.' })
+      await flush()
+
+      expect(lines).toEqual([
+        { time: '2026-11-16T05:00:00.000Z', project: options.project, status: 'Done', sessionId: 'abc', lastLine: 'Solved #4.' }
+      ])
+    })
+
+    it('a Run that missed its Start time adds a line with its Project', () => {
+      const lines: LogLine[] = []
+      const clock = fakeClock('2026-11-15T22:00:00')
+      const { entries } = setup({ now: clock.now, log: (line) => lines.push(line) })
+      entries.addRun({ clock: '04:00' }, options)
+
+      clock.set('2026-11-16T04:10:00')
+      entries.checkClock()
+
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Failed', note: 'missed start time' })])
+    })
+
+    it('a Run cut off by a crash adds a line with its Project when the app starts again', () => {
+      const lines: LogLine[] = []
+      const store = memoryStore([{ id: 'r', kind: 'Run', startTime: 'Now', retry: false, status: 'Running', run: options }])
+      setup({ store, log: (line) => lines.push(line) })
+
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Failed' })])
     })
   })
 })

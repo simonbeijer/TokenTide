@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Entry, EntryStatus, StartChoice, StartTime, WakeOptions } from '../shared/entry'
+import type { Entry, EntryStatus, RunOptions, StartChoice, StartTime, WakeOptions } from '../shared/entry'
 import type { LogLine } from '../shared/log'
 import type { AttemptReport } from './attemptOutcome'
 import type { EntryStore } from './entryStore'
@@ -15,6 +15,11 @@ export const retryDelay = 60_000
 export interface EntryListDeps {
   /** Makes one Attempt. Aborting the signal must end the Attempt; it then counts as failed. */
   runWakeAttempt: (signal: AbortSignal) => Promise<AttemptReport>
+  /**
+   * Makes the one Attempt of a Run, which lasts until Claude exits by itself. Aborting the signal must end it.
+   * `onAnswer` must be called when Claude first answers, so the Window can be recalculated while the Run works.
+   */
+  runRunAttempt?: (entry: Entry, signal: AbortSignal, onAnswer: () => void) => Promise<AttemptReport>
   store: EntryStore
   now?: () => Date
   /** Gets one line per event: an Attempt that ends, or an Entry that changes status without an Attempt. */
@@ -34,13 +39,14 @@ export const insideWindowWarning = 'starts inside the Window'
 type Listener = (entries: Entry[]) => void
 
 /** What a Running Entry needs in order to be stopped. */
-interface ActiveWake {
+interface ActiveEntry {
   attempt?: AbortController
   nextAttempt?: ReturnType<typeof setTimeout>
 }
 
 export function createEntryList({
   runWakeAttempt,
+  runRunAttempt = async () => ({ outcome: 'Failed' }),
   store,
   now = () => new Date(),
   log = () => {},
@@ -55,10 +61,12 @@ export function createEntryList({
     status: entry.status === 'Running' ? 'Failed' : entry.status
   }))
   store.save(entries)
-  const logEvent = (line: Omit<LogLine, 'time'>) => log({ time: now().toISOString(), ...line })
-  for (const entry of loaded) if (entry.status === 'Running') logEvent({ status: 'Failed', note: 'cut off by a restart' })
+  /** A Run's lines carry its Project. A Wake has none. */
+  const logEvent = (entry: Entry, line: Omit<LogLine, 'time' | 'project'>) =>
+    log({ time: now().toISOString(), ...(entry.run && { project: entry.run.project }), ...line })
+  for (const entry of loaded) if (entry.status === 'Running') logEvent(entry, { status: 'Failed', note: 'cut off by a restart' })
   const listeners = new Set<Listener>()
-  const active = new Map<string, ActiveWake>()
+  const active = new Map<string, ActiveEntry>()
 
   const list = () => entries.map((entry) => ({ ...entry }))
   const saveAndNotify = () => {
@@ -77,6 +85,7 @@ export function createEntryList({
   const startOf = (startTime: StartTime) => (startTime === 'Now' ? now() : new Date(startTime.at))
   // Only a warning: the Window end is typed by hand and can be old or wrong.
   const withWarning = (entry: Entry): Entry => {
+    if (entry.kind !== 'Wake') return entry
     const { warning: _old, ...rest } = entry
     return startsInsideWindow(startOf(entry.startTime), windowEnd?.get()) ? { ...rest, warning: insideWindowWarning } : rest
   }
@@ -95,6 +104,8 @@ export function createEntryList({
     windowEnd.set(end)
     refreshWarnings()
   }
+
+  const entryById = (id: string) => entries.find((entry) => entry.id === id)!
 
   const makeAttempt = async (id: string, retry: boolean) => {
     const wake = active.get(id)
@@ -116,10 +127,10 @@ export function createEntryList({
     // Stopped while the Attempt was ending. An answer still wins, because the Window has started then.
     if (active.get(id) !== wake) {
       if (outcome === 'Done') setStatus(id, 'Done')
-      logEvent({ status: outcome === 'Done' ? 'Done' : 'Stopped', ...output })
+      logEvent(entryById(id), { status: outcome === 'Done' ? 'Done' : 'Stopped', ...output })
       return
     }
-    logEvent({ status: outcome, ...output })
+    logEvent(entryById(id), { status: outcome, ...output })
     if (outcome === 'Failed' && retry) {
       wake.attempt = undefined
       wake.nextAttempt = setTimeout(() => void makeAttempt(id, retry), retryDelay)
@@ -128,10 +139,39 @@ export function createEntryList({
     finish(id, outcome)
   }
 
+  /** A Run has one Attempt and no time limit: Claude does the work and exits by itself. */
+  const makeRunAttempt = async (entry: Entry) => {
+    const run = active.get(entry.id)
+    if (!run) return
+    const attemptStart = now()
+    const attempt = new AbortController()
+    run.attempt = attempt
+    let report: AttemptReport
+    try {
+      report = await runRunAttempt(entry, attempt.signal, () => recalculateWindow(attemptStart))
+    } catch {
+      report = { outcome: 'Failed' }
+    }
+    const { outcome, ...output } = report
+    const stopped = active.get(entry.id) !== run
+    logEvent(entry, { status: stopped ? 'Stopped' : outcome, ...output })
+    if (!stopped) finish(entry.id, outcome)
+  }
+
   const start = (entry: Entry) => {
     active.set(entry.id, {})
     setStatus(entry.id, 'Running')
-    void makeAttempt(entry.id, entry.retry)
+    if (entry.kind === 'Run') void makeRunAttempt(entry)
+    else void makeAttempt(entry.id, entry.retry)
+  }
+
+  const add = (choice: StartChoice, fields: Omit<Entry, 'id' | 'startTime' | 'status'>): Entry => {
+    const startTime: StartTime = choice === 'Now' ? 'Now' : { at: nextOccurrence(choice.clock, now()).toISOString() }
+    const entry = withWarning({ id: randomUUID(), startTime, status: 'Waiting', ...fields })
+    entries = [...entries, entry]
+    saveAndNotify()
+    if (startTime === 'Now') start(entry)
+    return { ...entry }
   }
 
   return {
@@ -154,17 +194,15 @@ export function createEntryList({
         if (isMissed(startTime, current) && !entry.retry) {
           const note = 'missed start time'
           setStatus(entry.id, 'Failed', note)
-          logEvent({ status: 'Failed', note })
+          logEvent(entry, { status: 'Failed', note })
         } else start(entry)
       }
     },
     addWake(choice: StartChoice, { retry = false }: WakeOptions = {}): Entry {
-      const startTime: StartTime = choice === 'Now' ? 'Now' : { at: nextOccurrence(choice.clock, now()).toISOString() }
-      const entry = withWarning({ id: randomUUID(), kind: 'Wake', startTime, retry, status: 'Waiting' })
-      entries = [...entries, entry]
-      saveAndNotify()
-      if (startTime === 'Now') start(entry)
-      return { ...entry }
+      return add(choice, { kind: 'Wake', retry })
+    },
+    addRun(choice: StartChoice, run: RunOptions): Entry {
+      return add(choice, { kind: 'Run', retry: false, run })
     },
     /** Gives or takes away the warning on each Waiting Wake. Called when the user changes the Window end. */
     refreshWarnings,
@@ -175,7 +213,7 @@ export function createEntryList({
       clearTimeout(wake.nextAttempt)
       wake.attempt?.abort()
       // A running Attempt adds the Stopped line when it has ended; between Attempts there is none to do it.
-      if (!wake.attempt) logEvent({ status: 'Stopped' })
+      if (!wake.attempt) logEvent(entryById(id), { status: 'Stopped' })
       finish(id, 'Stopped')
     }
   }

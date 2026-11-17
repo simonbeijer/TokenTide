@@ -7,6 +7,9 @@ import { ClaudeSetting } from './ClaudeSetting'
 import { Log } from './Log'
 import { StatusPanel } from './StatusPanel'
 
+/** The folder's own name, which is what the user knows a Project by. */
+const projectName = (folder: string) => folder.split('/').filter(Boolean).at(-1) ?? folder
+
 export function App() {
   const [entries, setEntries] = useState<Entry[]>([])
 
@@ -36,13 +39,21 @@ export function App() {
         </p>
       )}
       <StatusPanel now={now} />
-      <AddEntry onAddWake={(start, options) => void window.tokentide.addWake(start, options)} />
+      <AddEntry
+        onAddWake={(start, options) => void window.tokentide.addWake(start, options)}
+        onAddRun={(start, options) => void window.tokentide.addRun(start, options)}
+      />
       <ul className="entry-list" aria-label="Entries">
         {entries.map((entry) => (
           <li key={entry.id} className="entry">
             <span className="entry-kind">{entry.kind}</span>
             <span className="entry-start">{startTimeLabel(entry.startTime, now)}</span>
             {entry.retry && <span className="entry-retry">Retry</span>}
+            {entry.run && (
+              <span className="entry-run" title={`${entry.run.project}\n${entry.run.permissionMode} · ${entry.run.model}\n\n${entry.run.prompt}`}>
+                {projectName(entry.run.project)} · {entry.run.model}
+              </span>
+            )}
             <span className={`entry-status status-${entry.status.toLowerCase()}`}>{entry.status}</span>
             {entry.note && <span className="entry-note">{entry.note}</span>}
             {entry.warning && (

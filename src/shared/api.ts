@@ -1,5 +1,5 @@
 import type { ClaudeLocation } from './claude'
-import type { Entry, StartChoice, WakeOptions } from './entry'
+import type { Entry, RunOptions, StartChoice, WakeOptions } from './entry'
 import type { LogLine } from './log'
 import type { WeeklyReset } from './weeklyReset'
 
@@ -14,6 +14,11 @@ export interface StatusValues {
 export interface TokenTideApi {
   listEntries(): Promise<Entry[]>
   addWake(start: StartChoice, options: WakeOptions): Promise<Entry>
+  addRun(start: StartChoice, options: RunOptions): Promise<Entry>
+  /** The Project folders the user has picked before. */
+  listProjects(): Promise<string[]>
+  /** Lets the user pick a folder and saves it as a Project. Undefined when the user cancels. */
+  chooseProject(): Promise<string | undefined>
   stopEntry(id: string): Promise<void>
   onEntriesChanged(listener: (entries: Entry[]) => void): () => void
   listLog(): Promise<LogLine[]>
@@ -32,6 +37,9 @@ export interface TokenTideApi {
 export const channels = {
   listEntries: 'entries:list',
   addWake: 'entries:add-wake',
+  addRun: 'entries:add-run',
+  listProjects: 'projects:list',
+  chooseProject: 'projects:choose',
   stopEntry: 'entries:stop',
   entriesChanged: 'entries:changed',
   listLog: 'log:list',

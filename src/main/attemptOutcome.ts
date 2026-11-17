@@ -6,7 +6,8 @@ interface ClaudeEvent {
   type: string
   session_id?: unknown
   result?: unknown
-  message?: { content?: unknown }
+  message?: { content?: unknown; model?: unknown }
+  error?: unknown
 }
 
 /** What one Attempt left behind: how it ended, and what the log line needs from Claude's output. */
@@ -70,4 +71,13 @@ function answerText(event: ClaudeEvent): string | undefined {
     })
     .map((block) => block.text)
   return texts.length > 0 ? texts.join('\n') : undefined
+}
+
+/**
+ * Whether one line of output shows that Claude answered, so a Window is running. An error that Claude Code
+ * writes as a message by itself, such as a login error, carries an `error` field or the model "<synthetic>".
+ */
+export function isAnswer(line: string): boolean {
+  const event = parseEvent(line)
+  return event?.type === 'assistant' && event.error === undefined && event.message?.model !== '<synthetic>'
 }

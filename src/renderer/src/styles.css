@@ -69,6 +69,27 @@ body {
   margin: 0;
 }
 
+.add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.add-project {
+  display: flex;
+  gap: 8px;
+}
+
+.add-project select {
+  flex: 1;
+  min-width: 0;
+}
+
+.add-field textarea {
+  font: inherit;
+  resize: vertical;
+}
+
 .add-actions {
   display: flex;
   gap: 8px;
@@ -104,8 +125,15 @@ body {
   color: GrayText;
 }
 
-.entry-retry {
+.entry-retry,
+.entry-run {
   color: GrayText;
+}
+
+.entry-run {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .entry-note {

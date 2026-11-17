@@ -37,6 +37,14 @@ describe('settings store', () => {
     expect(createSettingsStore(file).load()).toEqual(statusValues)
   })
 
+  it('keeps the saved Projects across a restart', () => {
+    const file = join(folder, 'settings.json')
+
+    createSettingsStore(file).save({ projects: ['/Users/me/dev/shop', '/Users/me/dev/blog'] })
+
+    expect(createSettingsStore(file).load()).toEqual({ projects: ['/Users/me/dev/shop', '/Users/me/dev/blog'] })
+  })
+
   it('starts with no settings when the file cannot be read, and moves it aside', () => {
     const file = join(folder, 'settings.json')
     writeFileSync(file, '{ not json')

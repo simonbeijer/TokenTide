@@ -8,6 +8,7 @@
 // FAKE_CLAUDE_IGNORE_SIGINT: when set, an interrupt does not end the process
 // FAKE_CLAUDE_IGNORE_SIGTERM: when set, a terminate does not end the process either
 // FAKE_CLAUDE_ANSWER_ON_SIGINT: when set, an interrupt makes Claude answer and exit 0
+// FAKE_CLAUDE_STDERR: text to write to stderr at start
 //
 // "hang" starts like a real Wake, then never answers until it is interrupted or terminated.
 import { appendFileSync, readdirSync, writeFileSync } from 'node:fs'
@@ -19,6 +20,8 @@ if (process.env.FAKE_CLAUDE_RECORD) {
     JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()) })
   )
 }
+
+if (process.env.FAKE_CLAUDE_STDERR) process.stderr.write(process.env.FAKE_CLAUDE_STDERR + '\n')
 
 const emit = (event) => process.stdout.write(JSON.stringify(event) + '\n')
 const sessionId = 'fake-session'

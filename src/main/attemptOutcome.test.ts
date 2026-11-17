@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readAttemptOutcome, readAttemptReport } from './attemptOutcome'
+import { readAttemptOutcome, readAttemptReport, isAnswer } from './attemptOutcome'
 
 const init = '{"type":"system","subtype":"init","session_id":"abc"}'
 const assistant = '{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]},"session_id":"abc"}'
@@ -51,5 +51,23 @@ describe('readAttemptReport', () => {
 
   it('has only the outcome when there is no output at all', () => {
     expect(readAttemptReport([], null)).toEqual({ outcome: 'Failed' })
+  })
+})
+
+describe('isAnswer', () => {
+  const assistant = (extra: object = {}, message: object = {}) =>
+    JSON.stringify({ type: 'assistant', message: { model: 'claude-opus', content: [{ type: 'text', text: 'Hi' }], ...message }, ...extra })
+
+  it('is an assistant event from the model', () => {
+    expect(isAnswer(assistant())).toBe(true)
+  })
+
+  it.each([
+    ['a start event', JSON.stringify({ type: 'system', subtype: 'init' })],
+    ['plain text', 'Hi'],
+    ['a login error written as a message', assistant({ error: 'authentication_failed' })],
+    ['a message Claude Code made up by itself', assistant({}, { model: '<synthetic>' })]
+  ])('is not %s', (_name, line) => {
+    expect(isAnswer(line)).toBe(false)
   })
 })
