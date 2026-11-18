@@ -440,6 +440,27 @@ describe('entry list', () => {
 
       expect(statusOf(entries)).toBe('Done')
     })
+
+    it('Quit during a later Attempt waits until that Attempt has ended', async () => {
+      let exit: (report: AttemptReport) => void = () => {}
+      const entries = createEntryList({
+        // Like a Claude that takes a moment to exit after the interrupt.
+        runWakeAttempt: () => new Promise((resolve) => (exit = resolve)),
+        store: memoryStore()
+      })
+      entries.addWake('Now', { retry: true })
+      exit({ outcome: 'Failed' })
+      await vi.advanceTimersByTimeAsync(60_000)
+      let quitDone = false
+
+      const quitting = entries.quit().then(() => (quitDone = true))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(quitDone).toBe(false)
+
+      exit({ outcome: 'Failed' })
+      await quitting
+      expect(statusOf(entries)).toBe('Stopped')
+    })
   })
 
   describe('the Window', () => {
@@ -1341,6 +1362,86 @@ describe('Run', () => {
       setup({ store, log: (line) => lines.push(line) })
 
       expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Failed' })])
+    })
+  })
+
+  describe('Quit', () => {
+    it('stops the Running Run, which is Stopped at the next start, with one Stopped line', async () => {
+      const lines: LogLine[] = []
+      const store = memoryStore()
+      const { run, entries } = setup({ store, log: (line) => lines.push(line) })
+      const entry = entries.addRun('Now', options)
+
+      await entries.quit()
+
+      expect(run.aborted).toBe(true)
+      expect(lines).toEqual([expect.objectContaining({ status: 'Stopped' })])
+      expect(setup({ store }).entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Stopped' })])
+    })
+
+    it('does not start the next Run in the queue', async () => {
+      const store = memoryStore()
+      const { run, entries } = setup({ store })
+      entries.addRun('Now', options)
+      const second = entries.addRun('Now', options)
+
+      await entries.quit()
+      entries.checkClock()
+      await flush()
+
+      expect(run.started).toHaveLength(1)
+      expect(store.saved[1]).toMatchObject({ id: second.id, status: 'Waiting' })
+    })
+
+    it('waits until the stopped Claude has exited', async () => {
+      let exit: (report: AttemptReport) => void = () => {}
+      const entries = createEntryList({
+        runWakeAttempt: controlledAttempt().run,
+        runRunAttempt: () => new Promise((resolve) => (exit = resolve)),
+        store: memoryStore()
+      })
+      entries.addRun('Now', options)
+      let quitDone = false
+
+      const quitting = entries.quit().then(() => (quitDone = true))
+      await flush()
+      expect(quitDone).toBe(false)
+
+      exit({ outcome: 'Failed' })
+      await quitting
+      expect(quitDone).toBe(true)
+    })
+
+    it('ends a Running Wake and starts no more Entries, not even a Wake whose Start time comes', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { wake, entries } = setup({ now: clock.now })
+      const running = entries.addWake('Now', { retry: true })
+      entries.addWake({ clock: '03:30' })
+
+      await entries.quit()
+      clock.set('2026-11-16T03:30:10')
+      entries.checkClock()
+      entries.addWake('Now')
+
+      expect(wake.aborted).toBe(true)
+      expect(wake.calls).toBe(1)
+      expect(entries.list().map((entry) => entry.status)).toEqual(['Stopped', 'Waiting', 'Waiting'])
+      expect(entries.list()[0].id).toBe(running.id)
+    })
+
+    it('leaves Waiting Entries Waiting, so the missed Start time rule applies at the next start', async () => {
+      const store = memoryStore()
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { entries } = setup({ store, now: clock.now })
+      entries.addRun({ clock: '04:00' }, options)
+
+      await entries.quit()
+      clock.set('2026-11-16T06:00:00')
+      const after = setup({ store, now: clock.now })
+      after.entries.checkClock()
+
+      expect(after.run.started).toHaveLength(0)
+      expect(after.entries.list()[0]).toMatchObject({ status: 'Failed', note: 'missed start time' })
     })
   })
 })

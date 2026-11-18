@@ -1,6 +1,6 @@
 import { homedir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, Tray } from 'electron'
 import { channels, type StatusValues } from '../shared/api'
 import type { ClaudeLocation } from '../shared/claude'
 import type { RunOptions, StartChoice, WakeOptions } from '../shared/entry'
@@ -13,6 +13,7 @@ import { withProject } from './projects'
 import { runRunAttempt } from './runAttempt'
 import { type LoginShellAnswer, readLoginShell } from './loginShell'
 import { createSettingsStore } from './settingsStore'
+import { tideIconBitmap } from './trayIcon'
 import { windowEndFrom } from './windowEnd'
 import { runWakeAttempt } from './wakeAttempt'
 
@@ -78,8 +79,19 @@ const entries = createEntryList({
   }
 })
 
+let appWindow: BrowserWindow | undefined
+
+/** Closing the app window ends it, but not the app, so the menu bar icon opens a new one. */
+function showAppWindow() {
+  if (appWindow && !appWindow.isDestroyed()) {
+    appWindow.show()
+    appWindow.focus()
+  } else appWindow = createAppWindow()
+  app.focus({ steal: true })
+}
+
 function createAppWindow(): BrowserWindow {
-  const appWindow = new BrowserWindow({
+  const created = new BrowserWindow({
     width: 420,
     height: 600,
     title: 'TokenTide',
@@ -91,12 +103,74 @@ function createAppWindow(): BrowserWindow {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void appWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void created.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void appWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void created.loadFile(join(__dirname, '../renderer/index.html'))
   }
-  return appWindow
+  created.on('closed', () => {
+    if (appWindow === created) appWindow = undefined
+  })
+  return created
 }
+
+/** Held here, because a Tray that is garbage collected disappears from the menu bar. */
+let tray: Tray | undefined
+
+function createTray() {
+  const icon = nativeImage.createFromBitmap(tideIconBitmap(16), { width: 16, height: 16 })
+  icon.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: tideIconBitmap(32) })
+  icon.setTemplateImage(true)
+  tray = new Tray(icon)
+  tray.setToolTip('TokenTide')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open TokenTide', click: showAppWindow },
+      { type: 'separator' },
+      { label: 'Quit TokenTide', click: () => app.quit() }
+    ])
+  )
+}
+
+/** Set once every Claude has exited: the quit after that is let through. */
+let readyToQuit = false
+/** Set while Claude is being ended, so a second quit cannot cut that short and leave Claude running. */
+let stopping = false
+let askingToQuit = false
+
+/** Stops every Running Entry, which gets Stopped, starts nothing more, and quits once every Claude has exited. */
+async function stopAndQuit() {
+  if (stopping) return
+  stopping = true
+  await entries.quit()
+  readyToQuit = true
+  app.quit()
+}
+
+async function confirmQuit() {
+  if (askingToQuit || stopping) return
+  askingToQuit = true
+  // From the menu bar icon with the app window closed, the question would otherwise open behind other apps.
+  app.focus({ steal: true })
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    buttons: ['Quit', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    message: 'Quit TokenTide?',
+    detail: 'A Running Entry is stopped and gets Stopped. Nothing starts until TokenTide is opened again.'
+  })
+  askingToQuit = false
+  if (response === 0) await stopAndQuit()
+}
+
+// Every quit, from the menu bar icon, the app menu or Cmd+Q, asks first. Saying no leaves everything as it was.
+app.on('before-quit', (event) => {
+  if (readyToQuit) return
+  event.preventDefault()
+  void confirmQuit()
+})
+// A menu bar app stays alive with no app window. Listening is enough to keep Electron from quitting.
+app.on('window-all-closed', () => {})
 
 ipcMain.handle(channels.listEntries, () => entries.list())
 ipcMain.handle(channels.addWake, (_event, start: StartChoice, options: WakeOptions) => entries.addWake(start, options))
@@ -149,8 +223,11 @@ void app.whenReady().then(async () => {
   entries.checkClock()
   setInterval(() => entries.checkClock(), clockCheckInterval)
   powerMonitor.on('resume', () => entries.checkClock())
-  createAppWindow()
+  // A question would hold up the shutdown, so the Running Run is stopped without one.
+  powerMonitor.on('shutdown', () => void stopAndQuit())
+  createTray()
+  showAppWindow()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createAppWindow()
+    if (!appWindow) showAppWindow()
   })
 })

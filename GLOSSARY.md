@@ -36,6 +36,10 @@ _Avoid_: Schedule, trigger time
 An optional clock time after which a Run must not be running. A Run still Waiting at its Hard stop never starts.
 _Avoid_: Timeout, deadline, stop time
 
+**Quit**:
+Ending the app itself. The user confirms first, except when the computer shuts down. Every Running Entry gets Stopped, nothing more starts, and Waiting Entries are still Waiting at the next start. Closing the app window is not Quit.
+_Avoid_: Exit, close, shut down
+
 ## Windows
 
 **Window**:
@@ -73,7 +77,7 @@ The Run ended because the plan's usage limit was hit.
 _Avoid_: Rate limited, out of tokens
 
 **Stopped**:
-The Entry was ended on purpose, by the user or by its Hard stop.
+The Entry was ended on purpose: by the user, by its Hard stop or by Quit.
 _Avoid_: Cancelled, aborted, killed
 
 **Failed**:

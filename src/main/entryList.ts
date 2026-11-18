@@ -74,6 +74,14 @@ export function createEntryList({
   for (const entry of loaded) if (entry.status === 'Running') logEvent(entry, { status: 'Failed', note: 'cut off by a restart' })
   const listeners = new Set<Listener>()
   const active = new Map<string, ActiveEntry>()
+  /** The Attempts whose Claude has not exited yet. Quit waits for them, so no Claude is left running. */
+  const ongoing = new Set<Promise<void>>()
+  /** Set on Quit: from then on nothing starts, so Waiting Entries are still Waiting at the next start. */
+  let quitting = false
+  const track = (attempt: Promise<void>) => {
+    const ending = attempt.finally(() => ongoing.delete(ending))
+    ongoing.add(ending)
+  }
 
   const list = () => entries.map((entry) => ({ ...entry }))
   const entryById = (id: string) => entries.find((entry) => entry.id === id)!
@@ -142,7 +150,7 @@ export function createEntryList({
     logEvent(entry, { status: outcome, ...output })
     if (outcome === 'Failed' && retry) {
       wake.attempt = undefined
-      wake.nextAttempt = setTimeout(() => void makeAttempt(id, retry), retryDelay)
+      wake.nextAttempt = setTimeout(() => track(makeAttempt(id, retry)), retryDelay)
       return
     }
     finish(id, outcome, output.note)
@@ -201,6 +209,8 @@ export function createEntryList({
 
   /** One Run at a time, so two agents never write to the same files. Starts the first due Run unless Claude works on one. */
   const startNextRun = () => {
+    // After Quit, Waiting Runs stay Waiting: the missed Start time rule is for the next start.
+    if (quitting) return
     const current = now()
     for (const entry of runQueue(entries, current)) {
       // Found too late the first time it was due: the computer slept or the app was closed, queue or not.
@@ -215,10 +225,10 @@ export function createEntryList({
   }
 
   const start = (entry: Entry) => {
+    if (quitting) return
     active.set(entry.id, {})
     setStatus(entry.id, 'Running')
-    if (entry.kind === 'Run') void makeRunAttempt(entry)
-    else void makeAttempt(entry.id, entry.retry)
+    track(entry.kind === 'Run' ? makeRunAttempt(entry) : makeAttempt(entry.id, entry.retry))
   }
 
   const add = (choice: StartChoice, fields: Omit<Entry, 'id' | 'startTime' | 'status'>): Entry => {
@@ -255,6 +265,7 @@ export function createEntryList({
      * A Wake does not wait for a Running Run. A Run waits for its turn in the queue.
      */
     checkClock() {
+      if (quitting) return
       const current = now()
       // A Run past its Hard stop must not be running, and must not start: stop it before anything is started.
       for (const entry of entries) {
@@ -282,6 +293,16 @@ export function createEntryList({
     },
     /** Gives or takes away the warning on each Waiting Wake. Called when the user changes the Window end. */
     refreshWarnings,
+    /**
+     * Quit: stops every Running Entry, which gets Stopped, and starts nothing more, not even the next Run in the queue.
+     * Resolves once every Claude the app started has exited.
+     */
+    async quit() {
+      quitting = true
+      for (const id of [...active.keys()]) stop(id)
+      // A Wake with Retry between Attempts has a new Attempt only once its timer fires, and stop cleared that timer.
+      while (ongoing.size > 0) await Promise.all(ongoing)
+    },
     /** The stop button: ends a Running Entry on purpose. */
     stop: (id: string) => stop(id),
     /**
