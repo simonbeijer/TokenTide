@@ -773,6 +773,7 @@ describe('Run', () => {
     let answer: () => void = () => {}
     let signal: AbortSignal | undefined
     const started: Entry[] = []
+    const finishById = new Map<string, (report: AttemptReport) => void>()
     return {
       run: (entry: Entry, runSignal: AbortSignal, onAnswer: () => void) => {
         started.push(entry)
@@ -780,11 +781,14 @@ describe('Run', () => {
         answer = onAnswer
         return new Promise<AttemptReport>((resolve) => {
           finish = resolve
+          finishById.set(entry.id, resolve)
           runSignal.addEventListener('abort', () => resolve({ outcome: 'Failed' }))
         })
       },
       answer: () => answer(),
+      /** Ends the Run that started last. */
       finish: (outcome: AttemptOutcome, output: Omit<AttemptReport, 'outcome'> = {}) => finish({ outcome, ...output }),
+      finishRun: (id: string, outcome: AttemptOutcome) => finishById.get(id)?.({ outcome }),
       started,
       get aborted() {
         return signal?.aborted ?? false
@@ -930,6 +934,243 @@ describe('Run', () => {
       expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Stopped' })])
       expect(entries.list()[0].note).toBeUndefined()
       expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Stopped' })])
+    })
+  })
+
+  describe('one Run at a time', () => {
+    const startedIds = (run: ReturnType<typeof controlledRun>) => run.started.map((entry) => entry.id)
+
+    it('a second Run whose Start time comes while a Run is Running stays Waiting, and starts when the first has ended', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, entries } = setup({ now: clock.now })
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun({ clock: '04:00' }, options)
+
+      clock.set('2026-11-16T04:00:10')
+      entries.checkClock()
+      expect(startedIds(run)).toEqual([first.id])
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Waiting' })
+
+      run.finishRun(first.id, 'Done')
+      await flush()
+
+      expect(startedIds(run)).toEqual([first.id, second.id])
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Running' })
+    })
+
+    it('Waiting Runs start in Start time order, and in the order they were added for the same Start time', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, entries } = setup({ now: clock.now })
+      const first = entries.addRun('Now', options)
+      const sameTimeA = entries.addRun({ clock: '04:30' }, options)
+      const earlier = entries.addRun({ clock: '04:00' }, options)
+      const sameTimeB = entries.addRun({ clock: '04:30' }, options)
+
+      clock.set('2026-11-16T04:00:10')
+      entries.checkClock()
+      clock.set('2026-11-16T04:30:00')
+      entries.checkClock()
+      const nowRun = entries.addRun('Now', options)
+      for (const id of [first.id, earlier.id, sameTimeA.id, sameTimeB.id]) {
+        run.finishRun(id, 'Done')
+        await flush()
+      }
+
+      expect(startedIds(run)).toEqual([first.id, earlier.id, sameTimeA.id, sameTimeB.id, nowRun.id])
+    })
+
+    it('a Run added with Start time Now while a Run is Running stays Waiting, and starts when the first has ended', async () => {
+      const { run, entries } = setup()
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun('Now', options)
+
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Waiting' })
+      run.finishRun(first.id, 'Done')
+      await flush()
+
+      expect(startedIds(run)).toEqual([first.id, second.id])
+    })
+
+    it('a Wake starts at its Start time while a Run is Running', () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, wake, entries } = setup({ now: clock.now })
+      entries.addRun('Now', options)
+      entries.addWake('Now')
+      entries.addWake({ clock: '04:00' })
+
+      clock.set('2026-11-16T04:00:10')
+      entries.checkClock()
+
+      expect(wake.calls).toBe(2)
+      expect(entries.list().map((entry) => entry.status)).toEqual(['Running', 'Running', 'Running'])
+      expect(run.started).toHaveLength(1)
+    })
+
+    it('a Run that starts late only because it waited for its turn starts anyway, without "missed start time"', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, entries } = setup({ now: clock.now })
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun({ clock: '04:00' }, options)
+
+      clock.set('2026-11-16T04:00:10')
+      entries.checkClock()
+      clock.set('2026-11-16T06:00:00')
+      entries.checkClock()
+      run.finishRun(first.id, 'Done')
+      await flush()
+
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Running' })
+      expect(entries.list()[1].note).toBeUndefined()
+    })
+
+    it('a Run that is late because the computer slept still gets "missed start time", also behind a Running Run', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, entries } = setup({ now: clock.now })
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun({ clock: '04:00' }, options)
+
+      // The computer slept from before the Start time until long after it.
+      clock.set('2026-11-16T06:00:00')
+      entries.checkClock()
+      run.finishRun(first.id, 'Done')
+      await flush()
+
+      expect(startedIds(run)).toEqual([first.id])
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Failed', note: 'missed start time' })
+    })
+
+    it('a Run that waited for its turn gets "missed start time" when the app was closed for long', () => {
+      const store = memoryStore()
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const before = setup({ store, now: clock.now }).entries
+      before.addRun('Now', options)
+      const second = before.addRun('Now', options)
+
+      clock.set('2026-11-16T06:00:00')
+      const { run, entries } = setup({ store, now: clock.now })
+      entries.checkClock()
+
+      expect(run.started).toHaveLength(0)
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Failed', note: 'missed start time' })
+    })
+
+    it('a Run that waited for its turn starts when the app opens again after a short while', () => {
+      const store = memoryStore()
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const before = setup({ store, now: clock.now }).entries
+      before.addRun('Now', options)
+      const second = before.addRun('Now', options)
+
+      clock.set('2026-11-16T03:02:00')
+      const { run, entries } = setup({ store, now: clock.now })
+      entries.checkClock()
+
+      expect(startedIds(run)).toEqual([second.id])
+    })
+
+    it('a Run still Waiting for its turn when its Hard stop passes never starts and gets Stopped with "hard stop"', async () => {
+      const lines: LogLine[] = []
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, entries } = setup({ now: clock.now, log: (line) => lines.push(line) })
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun({ clock: '04:00' }, { ...options, hardStop: '05:00' })
+
+      clock.set('2026-11-16T04:00:10')
+      entries.checkClock()
+      clock.set('2026-11-16T05:00:00')
+      entries.checkClock()
+      run.finishRun(first.id, 'Done')
+      await flush()
+
+      expect(startedIds(run)).toEqual([first.id])
+      expect(entries.list()[1]).toMatchObject({ id: second.id, status: 'Stopped', note: 'hard stop' })
+      expect(lines).toContainEqual(expect.objectContaining({ status: 'Stopped', note: 'hard stop' }))
+    })
+
+    it('when a Running Run is stopped by its Hard stop, the next Run starts', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      const { run, entries } = setup({ now: clock.now })
+      const first = entries.addRun('Now', { ...options, hardStop: '05:00' })
+      const second = entries.addRun({ clock: '04:00' }, options)
+
+      clock.set('2026-11-16T04:00:10')
+      entries.checkClock()
+      clock.set('2026-11-16T05:00:00')
+      entries.checkClock()
+      await flush()
+
+      expect(startedIds(run)).toEqual([first.id, second.id])
+      expect(entries.list().map((entry) => entry.status)).toEqual(['Stopped', 'Running'])
+    })
+
+    it.each<AttemptOutcome>(['Done', 'Failed', 'Limit reached'])('the next Run starts after a Run that ended %s', async (outcome) => {
+      const { run, entries } = setup()
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun('Now', options)
+
+      run.finishRun(first.id, outcome)
+      await flush()
+
+      expect(entries.list().map((entry) => entry.status)).toEqual([outcome, 'Running'])
+      expect(startedIds(run)).toEqual([first.id, second.id])
+    })
+
+    it('after Stop, the next Run waits until the stopped Claude has exited, so two agents never work at once', async () => {
+      const clock = fakeClock('2026-11-16T03:00:00')
+      let exit: (report: AttemptReport) => void = () => {}
+      const started: string[] = []
+      const entries = createEntryList({
+        runWakeAttempt: controlledAttempt().run,
+        // Like Claude after SIGINT: it takes a while to exit.
+        runRunAttempt: (entry) => {
+          started.push(entry.id)
+          return new Promise((resolve) => (exit = resolve))
+        },
+        store: memoryStore(),
+        now: clock.now
+      })
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun('Now', options)
+
+      entries.stop(first.id)
+      entries.checkClock()
+      expect(started).toEqual([first.id])
+      expect(entries.list().map((entry) => entry.status)).toEqual(['Stopped', 'Waiting'])
+
+      exit({ outcome: 'Failed' })
+      await flush()
+
+      expect(started).toEqual([first.id, second.id])
+    })
+
+    it('a Run whose Claude cannot even be started lets the next Run start', async () => {
+      const started: string[] = []
+      const entries = createEntryList({
+        runWakeAttempt: controlledAttempt().run,
+        runRunAttempt: (entry) => {
+          started.push(entry.id)
+          throw new Error('boom')
+        },
+        store: memoryStore()
+      })
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun('Now', options)
+      await flush()
+
+      expect(started).toEqual([first.id, second.id])
+      expect(entries.list().map((entry) => entry.status)).toEqual(['Failed', 'Failed'])
+    })
+
+    it('the next Run starts after a Run stopped with the stop button', async () => {
+      const { run, entries } = setup()
+      const first = entries.addRun('Now', options)
+      const second = entries.addRun('Now', options)
+
+      entries.stop(first.id)
+      await flush()
+
+      expect(entries.list().map((entry) => entry.status)).toEqual(['Stopped', 'Running'])
+      expect(startedIds(run)).toEqual([first.id, second.id])
     })
   })
 

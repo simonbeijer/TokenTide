@@ -5,6 +5,7 @@ import type { AttemptReport } from './attemptOutcome'
 import type { EntryStore } from './entryStore'
 import { hardStopAfter, hardStopPassed } from './hardStop'
 import { isMissed } from './lateness'
+import { runQueue, startTimeOf } from './runQueue'
 import { nextOccurrence } from './startTime'
 import { startsInsideWindow, windowEndAfterAnswer } from './windowEnd'
 
@@ -75,6 +76,7 @@ export function createEntryList({
   const active = new Map<string, ActiveEntry>()
 
   const list = () => entries.map((entry) => ({ ...entry }))
+  const entryById = (id: string) => entries.find((entry) => entry.id === id)!
   const saveAndNotify = () => {
     store.save(entries)
     listeners.forEach((listener) => listener(list()))
@@ -88,12 +90,11 @@ export function createEntryList({
     setStatus(id, status, note)
   }
 
-  const startOf = (startTime: StartTime) => (startTime === 'Now' ? now() : new Date(startTime.at))
   // Only a warning: the Window end is typed by hand and can be old or wrong.
   const withWarning = (entry: Entry): Entry => {
     if (entry.kind !== 'Wake') return entry
     const { warning: _old, ...rest } = entry
-    return startsInsideWindow(startOf(entry.startTime), windowEnd?.get()) ? { ...rest, warning: insideWindowWarning } : rest
+    return startsInsideWindow(startTimeOf(entry, now()), windowEnd?.get()) ? { ...rest, warning: insideWindowWarning } : rest
   }
   /** A Wake that has started keeps the warning it had, because the Window end it started under is what mattered. */
   const refreshWarnings = () => {
@@ -110,8 +111,6 @@ export function createEntryList({
     windowEnd.set(end)
     refreshWarnings()
   }
-
-  const entryById = (id: string) => entries.find((entry) => entry.id === id)!
 
   const makeAttempt = async (id: string, retry: boolean) => {
     const wake = active.get(id)
@@ -151,6 +150,7 @@ export function createEntryList({
   const makeRunAttempt = async (entry: Entry) => {
     const run = active.get(entry.id)
     if (!run) return
+    claudeWorkingOnRun = entry.id
     const attemptStart = now()
     const attempt = new AbortController()
     run.attempt = attempt
@@ -160,12 +160,15 @@ export function createEntryList({
     } catch {
       report = { outcome: 'Failed' }
     }
+    claudeWorkingOnRun = undefined
     const { outcome, ...output } = report
     if (run.stopped) logEvent(entry, { status: 'Stopped', ...output, ...run.stopped })
     else {
       logEvent(entry, { status: outcome, ...output })
       finish(entry.id, outcome, output.note)
     }
+    // Whatever status the Run got, the next Run gets its turn. Limit reached does not pause the queue.
+    startNextRun()
   }
 
   /** Ends a Running Entry on purpose: ends any running Attempt and makes no more. */
@@ -178,6 +181,35 @@ export function createEntryList({
     // A running Attempt adds the Stopped line when it has ended; between Attempts there is none to do it.
     if (!activeEntry.attempt) logEvent(entryById(id), { status: 'Stopped', ...activeEntry.stopped })
     finish(id, 'Stopped', note)
+  }
+
+  /**
+   * The Run whose Claude has not exited yet. A stopped Run is Stopped at once, but its Claude may still be
+   * ending, and the next Run must not start until it has.
+   */
+  let claudeWorkingOnRun: string | undefined
+  /** The Runs that were found on time but had to wait for their turn. Waiting for the queue does not make a Run late. */
+  const waitedForTurn = new Set<string>()
+
+  const missStart = (entry: Entry) => {
+    const note = 'missed start time'
+    setStatus(entry.id, 'Failed', note)
+    logEvent(entry, { status: 'Failed', note })
+  }
+
+  /** One Run at a time, so two agents never write to the same files. Starts the first due Run unless Claude works on one. */
+  const startNextRun = () => {
+    const current = now()
+    for (const entry of runQueue(entries, current)) {
+      // Found too late the first time it was due: the computer slept or the app was closed, queue or not.
+      if (!waitedForTurn.has(entry.id) && isMissed(startTimeOf(entry, current), current)) missStart(entry)
+      else waitedForTurn.add(entry.id)
+    }
+    if (claudeWorkingOnRun) return
+    const [next] = runQueue(entries, current)
+    if (!next) return
+    waitedForTurn.delete(next.id)
+    start(next)
   }
 
   const start = (entry: Entry) => {
@@ -196,11 +228,15 @@ export function createEntryList({
       startTime,
       status: 'Waiting',
       ...fields,
+      // A Run with Start time Now may have to wait for its turn, and its place in the queue needs a time.
+      ...(choice === 'Now' && fields.kind === 'Run' && { addedAt: startAt.toISOString() }),
       ...(hardStop && { hardStopAt: hardStopAfter(hardStop, startAt).toISOString() })
     })
     entries = [...entries, entry]
     saveAndNotify()
-    if (startTime === 'Now') start(entry)
+    // A Run waits for its turn in the queue. A Wake does not wait.
+    if (entry.kind === 'Run') startNextRun()
+    else if (startTime === 'Now') start(entry)
     return { ...entry }
   }
 
@@ -214,6 +250,7 @@ export function createEntryList({
      * Starts every Waiting Entry whose Start time has come. Called often, never as one long timer.
      * An Entry found too late was missed while the computer slept or the app was closed, and gets Failed,
      * unless it is a Wake with Retry: that one starts trying right away.
+     * A Wake does not wait for a Running Run. A Run waits for its turn in the queue.
      */
     checkClock() {
       const current = now()
@@ -227,15 +264,13 @@ export function createEntryList({
         }
       }
       for (const entry of entries) {
-        if (entry.status !== 'Waiting' || entry.startTime === 'Now') continue
+        if (entry.kind !== 'Wake' || entry.status !== 'Waiting' || entry.startTime === 'Now') continue
         const startTime = new Date(entry.startTime.at)
         if (startTime > current) continue
-        if (isMissed(startTime, current) && !entry.retry) {
-          const note = 'missed start time'
-          setStatus(entry.id, 'Failed', note)
-          logEvent(entry, { status: 'Failed', note })
-        } else start(entry)
+        if (isMissed(startTime, current) && !entry.retry) missStart(entry)
+        else start(entry)
       }
+      startNextRun()
     },
     addWake(choice: StartChoice, { retry = false }: WakeOptions = {}): Entry {
       return add(choice, { kind: 'Wake', retry })

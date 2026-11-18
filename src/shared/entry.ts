@@ -42,6 +42,8 @@ export interface Entry {
   run?: RunOptions
   /** When a Run's Hard stop passes, as an ISO timestamp: the first time the clock shows it after the Start time. */
   hardStopAt?: string
+  /** When a Run with Start time Now was added, as an ISO timestamp. It is due from then, also while it waits for its turn. */
+  addedAt?: string
 }
 
 /** What the user picks for a Wake in "+ Add", besides the Start time. */
