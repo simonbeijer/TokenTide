@@ -8,6 +8,7 @@ interface ClaudeEvent {
   result?: unknown
   message?: { content?: unknown; model?: unknown }
   error?: unknown
+  permission_denials?: unknown
 }
 
 /** What one Attempt left behind: how it ended, and what the log line needs from Claude's output. */
@@ -16,7 +17,14 @@ export interface AttemptReport {
   sessionId?: string
   /** The last line of Claude's answer. */
   lastLine?: string
+  /** How many actions Claude was denied, from the result event. Missing when none were, or the version does not list them. */
+  deniedActions?: number
+  /** Why the Attempt failed, when Claude's output says it, such as "not logged in". */
+  note?: string
 }
+
+/** The Note on an Attempt that Claude Code ended because it is not logged in. */
+export const notLoggedInNote = 'not logged in'
 
 /** Parses one line of `--output-format stream-json` output. Returns undefined for anything that is not an event. */
 export function parseEvent(line: string): ClaudeEvent | undefined {
@@ -42,7 +50,18 @@ export function readAttemptOutcome(lines: string[], exitCode: number | null): At
 const readEvents = (lines: string[]) => lines.map(parseEvent).filter((event) => event !== undefined)
 
 function outcomeOf(events: ClaudeEvent[], exitCode: number | null): AttemptOutcome {
+  if (notLoggedIn(events)) return 'Failed'
   return exitCode === 0 && events.at(-1)?.type === 'result' ? 'Done' : 'Failed'
+}
+
+/** Claude Code writes a missing login as a message of its own with this error, and then exits with code 1. */
+const notLoggedIn = (events: ClaudeEvent[]) =>
+  events.some((event) => event.type === 'assistant' && event.error === 'authentication_failed')
+
+/** The number of denied actions in the last result event. Claude Code before v2.1.259 does not list them. */
+function deniedActionsOf(events: ClaudeEvent[]): number | undefined {
+  const denials = lastOf(events.filter((event) => event.type === 'result'))?.permission_denials
+  return Array.isArray(denials) && denials.length > 0 ? denials.length : undefined
 }
 
 /** Reads an Attempt's outcome, session id and last line of the answer. Only JSON events are read, never free text. */
@@ -51,10 +70,13 @@ export function readAttemptReport(lines: string[], exitCode: number | null): Att
   const sessionId = lastOf(events.map((event) => event.session_id).filter((id) => typeof id === 'string'))
   const answer = lastOf(events.map(answerText).filter((text) => text !== undefined))
   const lastLine = answer === undefined ? undefined : lastOf(answer.split('\n').map((line) => line.trim()).filter(Boolean))
+  const deniedActions = deniedActionsOf(events)
   return {
     outcome: outcomeOf(events, exitCode),
     ...(sessionId !== undefined && { sessionId }),
-    ...(lastLine !== undefined && { lastLine })
+    ...(lastLine !== undefined && { lastLine }),
+    ...(deniedActions !== undefined && { deniedActions }),
+    ...(notLoggedIn(events) && { note: notLoggedInNote })
   }
 }
 

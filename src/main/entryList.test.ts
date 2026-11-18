@@ -608,6 +608,19 @@ describe('entry list', () => {
       expect(lines).toEqual([{ time: '2026-11-16T05:00:03.000Z', status: 'Done', sessionId: 'abc', lastLine: 'Hi!' }])
     })
 
+    it('a Wake that is not logged in gets "not logged in" on the Entry as well as on the line', async () => {
+      const attempt = controlledAttempt()
+      const { lines, log } = recordingLog()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), log })
+      entries.addWake('Now')
+
+      attempt.finish('Failed', { note: 'not logged in' })
+      await flush()
+
+      expect(entries.list()).toEqual([expect.objectContaining({ status: 'Failed', note: 'not logged in' })])
+      expect(lines).toEqual([expect.objectContaining({ status: 'Failed', note: 'not logged in' })])
+    })
+
     it('an Attempt that gave no output still adds a line, with the time and status', async () => {
       const { lines, log } = recordingLog()
       const clock = fakeClock('2026-11-16T05:00:00Z')
@@ -980,6 +993,42 @@ describe('Run', () => {
       expect(lines).toEqual([
         { time: '2026-11-16T05:00:00.000Z', project: options.project, status: 'Done', sessionId: 'abc', lastLine: 'Solved #4.' }
       ])
+    })
+
+    it('a Run that was denied some actions is Done, and its line shows how many', async () => {
+      const lines: LogLine[] = []
+      const { run, entries } = setup({ log: (line) => lines.push(line) })
+      const entry = entries.addRun('Now', options)
+
+      run.finish('Done', { sessionId: 'abc', lastLine: 'Solved #4.', deniedActions: 2 })
+      await flush()
+
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Done' })])
+      expect(entries.list()[0].note).toBeUndefined()
+      expect(lines).toEqual([expect.objectContaining({ status: 'Done', deniedActions: 2 })])
+    })
+
+    it('a Run with no denied actions has no number on its line', async () => {
+      const lines: LogLine[] = []
+      const { run, entries } = setup({ log: (line) => lines.push(line) })
+      entries.addRun('Now', options)
+
+      run.finish('Done', { sessionId: 'abc', lastLine: 'Solved #4.' })
+      await flush()
+
+      expect(lines[0]).not.toHaveProperty('deniedActions')
+    })
+
+    it('a Run stopped because Claude Code is not logged in is Failed with "not logged in", on the Entry and the line', async () => {
+      const lines: LogLine[] = []
+      const { run, entries } = setup({ log: (line) => lines.push(line) })
+      const entry = entries.addRun('Now', options)
+
+      run.finish('Failed', { sessionId: 'abc', lastLine: 'Not logged in · Please run /login', note: 'not logged in' })
+      await flush()
+
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Failed', note: 'not logged in' })])
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Failed', note: 'not logged in' })])
     })
 
     it('a Run that missed its Start time adds a line with its Project', () => {

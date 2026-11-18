@@ -142,7 +142,7 @@ export function createEntryList({
       wake.nextAttempt = setTimeout(() => void makeAttempt(id, retry), retryDelay)
       return
     }
-    finish(id, outcome)
+    finish(id, outcome, output.note)
   }
 
   /** A Run has one Attempt and no time limit: Claude does the work and exits by itself. */
@@ -162,7 +162,7 @@ export function createEntryList({
     if (run.stopped) logEvent(entry, { status: 'Stopped', ...output, ...run.stopped })
     else {
       logEvent(entry, { status: outcome, ...output })
-      finish(entry.id, outcome)
+      finish(entry.id, outcome, output.note)
     }
   }
 

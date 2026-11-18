@@ -171,6 +171,11 @@ body {
   color: GrayText;
 }
 
+.log-denied,
+.log-note {
+  font-weight: 600;
+}
+
 .log-last-line {
   overflow: hidden;
   text-overflow: ellipsis;

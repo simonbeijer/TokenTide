@@ -39,7 +39,9 @@ export function Log() {
               <span className="log-project">{line.project ?? ''}</span>
               <span className={`log-status status-${line.status.toLowerCase()}`}>{line.status}</span>
               <span className="log-session">{line.sessionId ?? ''}</span>
-              <span className="log-last-line">{line.lastLine ?? line.note ?? ''}</span>
+              {line.deniedActions !== undefined && <span className="log-denied">{line.deniedActions} denied</span>}
+              {line.note !== undefined && <span className="log-note">{line.note}</span>}
+              <span className="log-last-line">{line.lastLine ?? ''}</span>
             </li>
           ))
           .reverse()}

@@ -10,6 +10,8 @@ export interface LogLine {
   sessionId?: string
   /** The last line of Claude's answer. */
   lastLine?: string
-  /** Why the Entry got its status, when there was no Attempt to say it, such as "missed start time". */
+  /** How many actions Claude was denied, from the result event. Missing when none were. */
+  deniedActions?: number
+  /** Why the Entry got its status, such as "missed start time" or "not logged in". */
   note?: string
 }

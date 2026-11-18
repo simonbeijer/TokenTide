@@ -62,6 +62,21 @@ describe('runRunAttempt', () => {
     expect(outcome).toBe('Failed')
   })
 
+  it('is Done with the number of denied actions when Claude was denied some but exits with code 0', async () => {
+    const report = await setup({ FAKE_CLAUDE_SCENARIO: 'denied' }).attempt()
+    expect(report).toEqual({ outcome: 'Done', sessionId: 'fake-session', lastLine: 'Hi!', deniedActions: 2 })
+  })
+
+  it('is Done with no number when the Claude Code version does not list denied actions', async () => {
+    const report = await setup({ FAKE_CLAUDE_SCENARIO: 'old-version' }).attempt()
+    expect(report).toEqual({ outcome: 'Done', sessionId: 'fake-session', lastLine: 'Hi!' })
+  })
+
+  it('is Failed with the Note "not logged in" when Claude Code is not logged in', async () => {
+    const report = await setup({ FAKE_CLAUDE_SCENARIO: 'not-logged-in' }).attempt()
+    expect(report).toMatchObject({ outcome: 'Failed', note: 'not logged in' })
+  })
+
   it('is Failed when Claude cannot be started at all', async () => {
     const run = setup()
     const report = await runRunAttempt({ claudePath: '/nonexistent/claude', run: run.options, outputFile: run.outputFile })
