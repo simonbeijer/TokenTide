@@ -128,7 +128,9 @@ export function createEntryList({
     } finally {
       clearTimeout(timeout)
     }
-    const { outcome, ...output } = report
+    const { outcome: reported, ...output } = report
+    // Limit reached is a status for Runs. For a Wake it is a failed Attempt like any other.
+    const outcome = reported === 'Limit reached' ? 'Failed' : reported
     if (outcome === 'Done') recalculateWindow(attemptStart)
     // Stopped while the Attempt was ending. An answer still wins, because the Window has started then.
     if (wake.stopped) {

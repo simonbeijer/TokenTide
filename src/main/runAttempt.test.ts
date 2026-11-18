@@ -77,6 +77,16 @@ describe('runRunAttempt', () => {
     expect(report).toMatchObject({ outcome: 'Failed', note: 'not logged in' })
   })
 
+  it('is Limit reached when Claude writes a message with apiError "usage_limit_reached"', async () => {
+    const report = await setup({ FAKE_CLAUDE_SCENARIO: 'limit-reached' }).attempt()
+    expect(report).toMatchObject({ outcome: 'Limit reached', sessionId: 'fake-session' })
+  })
+
+  it('is Limit reached when Claude writes a rate_limit_event with status rejected', async () => {
+    const report = await setup({ FAKE_CLAUDE_SCENARIO: 'rate-limit-event' }).attempt()
+    expect(report).toMatchObject({ outcome: 'Limit reached', sessionId: 'fake-session' })
+  })
+
   it('is Failed when Claude cannot be started at all', async () => {
     const run = setup()
     const report = await runRunAttempt({ claudePath: '/nonexistent/claude', run: run.options, outputFile: run.outputFile })

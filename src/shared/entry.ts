@@ -1,4 +1,4 @@
-export type EntryStatus = 'Waiting' | 'Running' | 'Done' | 'Stopped' | 'Failed'
+export type EntryStatus = 'Waiting' | 'Running' | 'Done' | 'Limit reached' | 'Stopped' | 'Failed'
 
 export type EntryKind = 'Wake' | 'Run'
 

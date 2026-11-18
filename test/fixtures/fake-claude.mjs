@@ -2,7 +2,7 @@
 // Stand-in for the real `claude` binary. Tests never start the real Claude.
 // It emits the same kind of stream-json lines and records how it was started.
 //
-// FAKE_CLAUDE_SCENARIO: success (default) | error-exit | no-result | text-only | hang | denied | old-version | not-logged-in
+// FAKE_CLAUDE_SCENARIO: success (default) | error-exit | no-result | text-only | hang | denied | old-version | not-logged-in | limit-reached | rate-limit-event
 // FAKE_CLAUDE_RECORD:   path of a JSON file to write { args, cwd, cwdEntries } to
 // FAKE_CLAUDE_SIGNALS:  path of a file to append the name of each signal received to
 // FAKE_CLAUDE_IGNORE_SIGINT: when set, an interrupt does not end the process
@@ -13,6 +13,7 @@
 // "hang" starts like a real Wake, then never answers until it is interrupted or terminated.
 // "denied" succeeds but lists two denied actions. "old-version" succeeds with no `permission_denials` field,
 // as Claude Code before v2.1.259 does. "not-logged-in" writes what Claude Code 2.1.326 writes without a login.
+// "limit-reached" and "rate-limit-event" write the two known shapes of a reached usage limit.
 import { appendFileSync, readdirSync, writeFileSync } from 'node:fs'
 
 const scenario = process.env.FAKE_CLAUDE_SCENARIO ?? 'success'
@@ -53,6 +54,29 @@ if (scenario === 'not-logged-in') {
     permission_denials: [],
     terminal_reason: 'api_error'
   })
+  process.exit(1)
+}
+
+// Not verified against a real limit: built on the fields in PLAN.md, Facts.
+const limitText = "You've hit your limit"
+const rateLimitInfo = { status: 'rejected', resetsAt: 1763460000, rateLimitType: 'five_hour' }
+const limitResult = { type: 'result', subtype: 'success', is_error: true, result: limitText, session_id: sessionId, permission_denials: [] }
+
+if (scenario === 'limit-reached') {
+  emit({
+    type: 'assistant',
+    session_id: sessionId,
+    message: { model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: limitText }] },
+    apiError: 'usage_limit_reached',
+    rate_limit_info: rateLimitInfo
+  })
+  emit(limitResult)
+  process.exit(1)
+}
+
+if (scenario === 'rate-limit-event') {
+  emit({ type: 'rate_limit_event', session_id: sessionId, rate_limit_info: rateLimitInfo })
+  emit(limitResult)
   process.exit(1)
 }
 emit({ type: 'assistant', session_id: sessionId, message: { content: [{ type: 'text', text: 'Hi!' }] } })

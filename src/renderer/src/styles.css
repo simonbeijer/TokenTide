@@ -121,6 +121,10 @@ body {
   color: crimson;
 }
 
+.status-limit-reached {
+  color: darkorange;
+}
+
 .status-stopped {
   color: GrayText;
 }

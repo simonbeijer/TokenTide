@@ -6,6 +6,7 @@ import { AddEntry } from './AddEntry'
 import { ClaudeSetting } from './ClaudeSetting'
 import { Log } from './Log'
 import { StatusPanel } from './StatusPanel'
+import { statusClass } from './statusClass'
 
 /** The folder's own name, which is what the user knows a Project by. */
 const projectName = (folder: string) => folder.split('/').filter(Boolean).at(-1) ?? folder
@@ -59,7 +60,7 @@ export function App() {
                 stops {startTimeLabel({ at: entry.hardStopAt }, now)}
               </span>
             )}
-            <span className={`entry-status status-${entry.status.toLowerCase()}`}>{entry.status}</span>
+            <span className={`entry-status ${statusClass(entry.status)}`}>{entry.status}</span>
             {entry.note && <span className="entry-note">{entry.note}</span>}
             {entry.warning && (
               <span className="entry-warning" role="note">

@@ -299,6 +299,32 @@ describe('entry list', () => {
       expect(attempt.calls).toBe(1)
     })
 
+    it('an Attempt that hits the usage limit is a failed Attempt: without Retry the Wake is Failed', async () => {
+      const attempt = controlledAttempt()
+      const lines: LogLine[] = []
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), log: (line) => lines.push(line) })
+      entries.addWake('Now')
+
+      attempt.finish('Limit reached')
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+
+      expect(statusOf(entries)).toBe('Failed')
+      expect(lines).toEqual([expect.objectContaining({ status: 'Failed' })])
+      expect(attempt.calls).toBe(1)
+    })
+
+    it('with Retry, an Attempt that hits the usage limit is followed by a new one, like any failed Attempt', async () => {
+      const attempt = controlledAttempt()
+      const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+      entries.addWake('Now', { retry: true })
+
+      attempt.finish('Limit reached')
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      expect(attempt.calls).toBe(2)
+      expect(statusOf(entries)).toBe('Running')
+    })
+
     it('with Retry, a failed Attempt is followed by a new one a minute later, and the Wake stays Running', async () => {
       const attempt = controlledAttempt()
       const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
@@ -1029,6 +1055,31 @@ describe('Run', () => {
 
       expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Failed', note: 'not logged in' })])
       expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Failed', note: 'not logged in' })])
+    })
+
+    it('a Run that hit the usage limit gets Limit reached, on the Entry and the line', async () => {
+      const lines: LogLine[] = []
+      const { run, entries } = setup({ log: (line) => lines.push(line) })
+      const entry = entries.addRun('Now', options)
+
+      run.finish('Limit reached', { sessionId: 'abc', lastLine: "You've hit your limit" })
+      await flush()
+
+      expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Limit reached' })])
+      expect(lines).toEqual([expect.objectContaining({ project: options.project, status: 'Limit reached', sessionId: 'abc' })])
+    })
+
+    it('a Run that got Limit reached is not started again', async () => {
+      const { run, entries } = setup()
+      entries.addRun('Now', options)
+
+      run.finish('Limit reached')
+      await flush()
+      entries.checkClock()
+      await flush()
+
+      expect(run.started).toHaveLength(1)
+      expect(entries.list()[0].status).toBe('Limit reached')
     })
 
     it('a Run that missed its Start time adds a line with its Project', () => {

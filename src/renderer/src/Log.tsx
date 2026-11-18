@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { LogLine } from '../../shared/log'
+import { statusClass } from './statusClass'
 
 const twoDigits = (value: number) => String(value).padStart(2, '0')
 
@@ -37,7 +38,7 @@ export function Log() {
             <li key={index} className="log-line">
               <span className="log-time">{timeLabel(line.time)}</span>
               <span className="log-project">{line.project ?? ''}</span>
-              <span className={`log-status status-${line.status.toLowerCase()}`}>{line.status}</span>
+              <span className={`log-status ${statusClass(line.status)}`}>{line.status}</span>
               <span className="log-session">{line.sessionId ?? ''}</span>
               {line.deniedActions !== undefined && <span className="log-denied">{line.deniedActions} denied</span>}
               {line.note !== undefined && <span className="log-note">{line.note}</span>}

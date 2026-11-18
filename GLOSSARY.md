@@ -69,7 +69,7 @@ Claude finished the Entry and reported success.
 _Avoid_: Completed, succeeded, finished
 
 **Limit reached**:
-The Entry ended because the plan's usage limit was hit.
+The Run ended because the plan's usage limit was hit.
 _Avoid_: Rate limited, out of tokens
 
 **Stopped**:

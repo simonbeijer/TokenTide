@@ -105,6 +105,57 @@ describe('readAttemptReport: not logged in', () => {
   })
 })
 
+describe('readAttemptReport: limit reached', () => {
+  // Neither shape is verified against a real limit yet. See PLAN.md, Facts.
+  const limitInfo = { status: 'rejected', resetsAt: 1763460000, rateLimitType: 'five_hour' }
+  const apiErrorMessage = JSON.stringify({
+    type: 'assistant',
+    message: { model: '<synthetic>', content: [{ type: 'text', text: "You've hit your limit" }] },
+    session_id: 'abc',
+    apiError: 'usage_limit_reached',
+    rate_limit_info: limitInfo
+  })
+  const errorMessage = JSON.stringify({
+    type: 'assistant',
+    message: { model: '<synthetic>', content: [{ type: 'text', text: "You've hit your limit" }] },
+    session_id: 'abc',
+    error: 'usage_limit_reached'
+  })
+  const rateLimitEvent = (status: string) =>
+    JSON.stringify({ type: 'rate_limit_event', session_id: 'abc', rate_limit_info: { ...limitInfo, status } })
+  const failedResult = resultLine({ is_error: true, result: "You've hit your limit" })
+
+  it('is Limit reached for a message with apiError "usage_limit_reached", as in a session log', () => {
+    expect(readAttemptReport([init, apiErrorMessage, failedResult], 1).outcome).toBe('Limit reached')
+  })
+
+  it('is Limit reached for a message with error "usage_limit_reached"', () => {
+    expect(readAttemptReport([init, errorMessage, failedResult], 1).outcome).toBe('Limit reached')
+  })
+
+  it('is Limit reached for a rate_limit_event whose status is rejected', () => {
+    expect(readAttemptReport([init, rateLimitEvent('rejected'), failedResult], 1).outcome).toBe('Limit reached')
+  })
+
+  it('is Limit reached for a rate_limit_event with the status at the top level', () => {
+    const event = JSON.stringify({ type: 'rate_limit_event', status: 'rejected', resetsAt: 1763460000 })
+    expect(readAttemptReport([init, event, failedResult], 1).outcome).toBe('Limit reached')
+  })
+
+  it('is Limit reached even if the exit code were 0 after a result event', () => {
+    expect(readAttemptReport([init, apiErrorMessage, resultLine({ is_error: false })], 0).outcome).toBe('Limit reached')
+  })
+
+  it('is still Done after a rate_limit_event that only reports the limit as allowed', () => {
+    const lines = [init, rateLimitEvent('allowed'), rateLimitEvent('allowed_warning'), assistant, result]
+    expect(readAttemptReport(lines, 0).outcome).toBe('Done')
+  })
+
+  it('does not read a reached limit from free text', () => {
+    expect(readAttemptReport([init, 'usage_limit_reached', 'rate_limit_event rejected'], 1).outcome).toBe('Failed')
+  })
+})
+
 function resultLine(extra: object) {
   return JSON.stringify({ type: 'result', subtype: 'success', session_id: 'abc', ...extra })
 }
