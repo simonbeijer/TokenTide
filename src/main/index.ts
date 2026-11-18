@@ -1,6 +1,6 @@
 import { homedir, userInfo } from 'node:os'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, powerSaveBlocker, Tray } from 'electron'
 import { channels, type StatusValues } from '../shared/api'
 import type { ClaudeLocation } from '../shared/claude'
 import type { RunOptions, StartChoice, WakeOptions } from '../shared/entry'
@@ -8,6 +8,7 @@ import { nextWeeklyReset, type WeeklyReset } from '../shared/weeklyReset'
 import { locateClaude } from './claudeLocation'
 import { createEntryList } from './entryList'
 import { createEntryStore } from './entryStore'
+import { createKeepAwake } from './keepAwake'
 import { createLogStore } from './logStore'
 import { withProject } from './projects'
 import { runRunAttempt } from './runAttempt'
@@ -79,6 +80,12 @@ const entries = createEntryList({
   }
 })
 
+// 'prevent-app-suspension' keeps the computer from sleeping by itself but lets the display turn off.
+const keepAwake = createKeepAwake({
+  start: () => powerSaveBlocker.start('prevent-app-suspension'),
+  stop: (id) => powerSaveBlocker.stop(id)
+})
+
 let appWindow: BrowserWindow | undefined
 
 /** Closing the app window ends it, but not the app, so the menu bar icon opens a new one. */
@@ -142,6 +149,7 @@ async function stopAndQuit() {
   if (stopping) return
   stopping = true
   await entries.quit()
+  keepAwake.quit()
   readyToQuit = true
   app.quit()
 }
@@ -214,11 +222,14 @@ ipcMain.handle(channels.setWeeklyReset, (_event, reset: WeeklyReset) => {
 })
 
 entries.onChange((list) => sendToAppWindows(channels.entriesChanged, list))
+entries.onChange((list) => keepAwake.update(list))
 
 // Compare the list with the clock often, instead of one long timer that would stop while the computer sleeps.
 const clockCheckInterval = 30_000
 
 void app.whenReady().then(async () => {
+  // After a restart with Waiting Entries, the computer is kept awake again.
+  keepAwake.update(entries.list())
   await claudeReady
   entries.checkClock()
   setInterval(() => entries.checkClock(), clockCheckInterval)
