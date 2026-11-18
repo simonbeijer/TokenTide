@@ -72,6 +72,11 @@ export function App() {
                 Stop
               </button>
             )}
+            {entry.status !== 'Running' && (
+              <button type="button" className="entry-remove" onClick={() => void window.tokentide.removeEntry(entry.id)}>
+                Remove
+              </button>
+            )}
           </li>
         ))}
       </ul>

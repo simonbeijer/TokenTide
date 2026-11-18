@@ -10,6 +10,7 @@ const api: TokenTideApi = {
   listProjects: () => ipcRenderer.invoke(channels.listProjects),
   chooseProject: () => ipcRenderer.invoke(channels.chooseProject),
   stopEntry: (id) => ipcRenderer.invoke(channels.stopEntry, id),
+  removeEntry: (id) => ipcRenderer.invoke(channels.removeEntry, id),
   onEntriesChanged(listener) {
     const handler = (_event: IpcRendererEvent, entries: Entry[]) => listener(entries)
     ipcRenderer.on(channels.entriesChanged, handler)

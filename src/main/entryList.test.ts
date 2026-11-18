@@ -1344,3 +1344,125 @@ describe('Run', () => {
     })
   })
 })
+
+describe('remove', () => {
+  const options: RunOptions = { project: '/Users/me/dev/shop', prompt: 'Solve one issue', permissionMode: 'Auto', model: 'opus' }
+
+  it.each<AttemptOutcome>(['Done', 'Limit reached', 'Failed'])('a %s Run can be removed and disappears from the list', async (outcome) => {
+    let finish: (report: AttemptReport) => void = () => {}
+    const entries = createEntryList({
+      runWakeAttempt: async () => ({ outcome: 'Done' }),
+      runRunAttempt: () => new Promise((resolve) => (finish = resolve)),
+      store: memoryStore()
+    })
+    const entry = entries.addRun('Now', options)
+    finish({ outcome })
+    await flush()
+
+    entries.remove(entry.id)
+
+    expect(entries.list()).toEqual([])
+  })
+
+  it('a Stopped Entry can be removed', async () => {
+    const attempt = controlledAttempt()
+    const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+    const entry = entries.addWake('Now', { retry: true })
+    entries.stop(entry.id)
+    await flush()
+
+    entries.remove(entry.id)
+
+    expect(entries.list()).toEqual([])
+  })
+
+  it('a Waiting Wake can be removed, and then it never starts', () => {
+    const clock = fakeClock('2026-11-16T03:00:00')
+    const attempt = controlledAttempt()
+    const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore(), now: clock.now })
+    const entry = entries.addWake({ clock: '04:00' })
+
+    entries.remove(entry.id)
+    clock.set('2026-11-16T04:00:10')
+    entries.checkClock()
+
+    expect(entries.list()).toEqual([])
+    expect(attempt.calls).toBe(0)
+  })
+
+  it('a Run Waiting for its turn can be removed, and then it never starts', async () => {
+    const started: string[] = []
+    let finish: (report: AttemptReport) => void = () => {}
+    const entries = createEntryList({
+      runWakeAttempt: async () => ({ outcome: 'Done' }),
+      runRunAttempt: (entry) => {
+        started.push(entry.id)
+        return new Promise((resolve) => (finish = resolve))
+      },
+      store: memoryStore()
+    })
+    const first = entries.addRun('Now', options)
+    const second = entries.addRun('Now', options)
+
+    entries.remove(second.id)
+    finish({ outcome: 'Done' })
+    await flush()
+
+    expect(started).toEqual([first.id])
+    expect(entries.list()).toEqual([expect.objectContaining({ id: first.id, status: 'Done' })])
+  })
+
+  it('a Running Entry cannot be removed', () => {
+    const attempt = controlledAttempt()
+    const entries = createEntryList({ runWakeAttempt: attempt.run, store: memoryStore() })
+    const entry = entries.addWake('Now')
+
+    entries.remove(entry.id)
+
+    expect(entries.list()).toEqual([expect.objectContaining({ id: entry.id, status: 'Running' })])
+    expect(attempt.aborted).toBe(false)
+  })
+
+  it('a removed Entry stays gone after a restart', async () => {
+    const store = memoryStore()
+    const entries = createEntryList({ runWakeAttempt: async () => ({ outcome: 'Done' }), store })
+    const entry = entries.addWake('Now')
+    await flush()
+
+    entries.remove(entry.id)
+
+    expect(createEntryList({ runWakeAttempt: async () => ({ outcome: 'Done' }), store }).list()).toEqual([])
+  })
+
+  it('removing an Entry adds no log line', async () => {
+    const lines: LogLine[] = []
+    const entries = createEntryList({ runWakeAttempt: async () => ({ outcome: 'Done' }), store: memoryStore(), log: (line) => lines.push(line) })
+    const entry = entries.addWake('Now')
+    await flush()
+    const before = [...lines]
+
+    entries.remove(entry.id)
+
+    expect(lines).toEqual(before)
+  })
+
+  it('a stopped Wake removed while its Attempt is still ending still gets its Stopped line', async () => {
+    const lines: LogLine[] = []
+    let finish: (report: AttemptReport) => void = () => {}
+    // An Attempt that ignores the abort, like a Claude that takes a moment to exit.
+    const entries = createEntryList({
+      runWakeAttempt: () => new Promise((resolve) => (finish = resolve)),
+      store: memoryStore(),
+      log: (line) => lines.push(line)
+    })
+    const entry = entries.addWake('Now', { retry: true })
+    entries.stop(entry.id)
+
+    entries.remove(entry.id)
+    finish({ outcome: 'Failed' })
+    await flush()
+
+    expect(entries.list()).toEqual([])
+    expect(lines).toEqual([expect.objectContaining({ status: 'Stopped' })])
+  })
+})

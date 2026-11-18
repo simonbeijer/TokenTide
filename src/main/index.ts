@@ -114,6 +114,7 @@ ipcMain.handle(channels.chooseProject, async (event) => {
   return folder
 })
 ipcMain.handle(channels.stopEntry, (_event, id: string) => entries.stop(id))
+ipcMain.handle(channels.removeEntry, (_event, id: string) => entries.remove(id))
 ipcMain.handle(channels.listLog, () => logStore.read())
 ipcMain.handle(channels.getClaude, async () => {
   await claudeReady

@@ -115,6 +115,8 @@ export function createEntryList({
   const makeAttempt = async (id: string, retry: boolean) => {
     const wake = active.get(id)
     if (!wake) return
+    // Kept from the start: a stopped Wake can be removed while its Attempt is still ending.
+    const entry = entryById(id)
     const attemptStart = now()
     const attempt = new AbortController()
     wake.attempt = attempt
@@ -134,10 +136,10 @@ export function createEntryList({
     // Stopped while the Attempt was ending. An answer still wins, because the Window has started then.
     if (wake.stopped) {
       if (outcome === 'Done') setStatus(id, 'Done')
-      logEvent(entryById(id), outcome === 'Done' ? { status: 'Done', ...output } : { status: 'Stopped', ...output, ...wake.stopped })
+      logEvent(entry, outcome === 'Done' ? { status: 'Done', ...output } : { status: 'Stopped', ...output, ...wake.stopped })
       return
     }
-    logEvent(entryById(id), { status: outcome, ...output })
+    logEvent(entry, { status: outcome, ...output })
     if (outcome === 'Failed' && retry) {
       wake.attempt = undefined
       wake.nextAttempt = setTimeout(() => void makeAttempt(id, retry), retryDelay)
@@ -281,6 +283,17 @@ export function createEntryList({
     /** Gives or takes away the warning on each Waiting Wake. Called when the user changes the Window end. */
     refreshWarnings,
     /** The stop button: ends a Running Entry on purpose. */
-    stop: (id: string) => stop(id)
+    stop: (id: string) => stop(id),
+    /**
+     * Takes an Entry that is not Running out of the list for good; a Waiting one then never starts.
+     * A Running Entry stays: it has to be stopped first. The log and a Run's saved output stay too.
+     */
+    remove(id: string) {
+      const entry = entries.find((candidate) => candidate.id === id)
+      if (!entry || entry.status === 'Running') return
+      entries = entries.filter((candidate) => candidate.id !== id)
+      waitedForTurn.delete(id)
+      saveAndNotify()
+    }
   }
 }

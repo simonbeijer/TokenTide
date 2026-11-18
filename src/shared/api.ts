@@ -20,6 +20,8 @@ export interface TokenTideApi {
   /** Lets the user pick a folder and saves it as a Project. Undefined when the user cancels. */
   chooseProject(): Promise<string | undefined>
   stopEntry(id: string): Promise<void>
+  /** Removes an Entry that is not Running. A Running Entry is left as it is. */
+  removeEntry(id: string): Promise<void>
   onEntriesChanged(listener: (entries: Entry[]) => void): () => void
   listLog(): Promise<LogLine[]>
   onLogLine(listener: (line: LogLine) => void): () => void
@@ -41,6 +43,7 @@ export const channels = {
   listProjects: 'projects:list',
   chooseProject: 'projects:choose',
   stopEntry: 'entries:stop',
+  removeEntry: 'entries:remove',
   entriesChanged: 'entries:changed',
   listLog: 'log:list',
   logLine: 'log:line',
